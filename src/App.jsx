@@ -842,7 +842,7 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 /*  Fiche projet — création avec équipe + conduite de projet automatique  */
 /* ---------------------------------------------------------------------- */
 
-function ProjectModal({ project, members, currentMemberId, onSave, onDelete, onClose }) {
+function ProjectModal({ project, members, tasks, currentMemberId, onSave, onDelete, onClose }) {
   const isNew = !project;
   const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: [] });
   const [genGovernance, setGenGovernance] = useState(isNew);
@@ -901,7 +901,13 @@ function ProjectModal({ project, members, currentMemberId, onSave, onDelete, onC
       )}
       <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
         {project ? (
-          <button onClick={() => onDelete(project.id)} className="text-red-500 hover:bg-red-50 text-sm font-medium px-3 py-2 rounded-lg flex items-center gap-1.5"><Trash2 size={14} /> Supprimer</button>
+          <button onClick={() => {
+            const count = (tasks || []).filter(t => t.projectId === project.id).length;
+            const msg = count > 0
+              ? `Supprimer ce projet supprimera aussi ses ${count} tâche${count !== 1 ? 's' : ''} associée${count !== 1 ? 's' : ''}. Continuer ?`
+              : 'Supprimer ce projet ?';
+            if (window.confirm(msg)) onDelete(project.id);
+          }} className="text-red-500 hover:bg-red-50 text-sm font-medium px-3 py-2 rounded-lg flex items-center gap-1.5"><Trash2 size={14} /> Supprimer</button>
         ) : <span />}
         <button disabled={!form.name.trim()} onClick={handleSubmit} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
           {project ? 'Enregistrer' : 'Créer le projet'}
@@ -1971,9 +1977,9 @@ function ReferentApp({ session, onSignOut }) {
     deleteRow('projects', id);
     const affectedTasks = tasks.filter(t => t.projectId === id);
     if (affectedTasks.length) {
-      const updated = affectedTasks.map(t => ({ ...t, projectId: '' }));
-      setTasks(prev => prev.map(t => updated.find(u => u.id === t.id) || t));
-      upsertRows('tasks', updated);
+      const affectedIds = new Set(affectedTasks.map(t => t.id));
+      setTasks(prev => prev.filter(t => !affectedIds.has(t.id)));
+      affectedTasks.forEach(t => deleteRow('tasks', t.id));
     }
     setProjectModal(null);
   };
@@ -2146,7 +2152,7 @@ function ReferentApp({ session, onSignOut }) {
 
       {taskModal && <TaskModal task={taskModal.task} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} onSave={saveTask} onDelete={deleteTask} onClaim={claimTask} onDuplicate={duplicateTask} onClose={() => setTaskModal(null)} />}
       {memberModal && perm.canManageTeam && <MemberModal member={memberModal.member} onSave={saveMember} onDelete={deleteMember} onClose={() => setMemberModal(null)} />}
-      {projectModal && perm.canCreateProject && <ProjectModal project={projectModal.project} members={members} currentMemberId={connectedAs} onSave={saveProject} onDelete={deleteProject} onClose={() => setProjectModal(null)} />}
+      {projectModal && perm.canCreateProject && <ProjectModal project={projectModal.project} members={members} tasks={tasks} currentMemberId={connectedAs} onSave={saveProject} onDelete={deleteProject} onClose={() => setProjectModal(null)} />}
       {apptModal && <AppointmentModal appointment={apptModal.appointment} members={members} externalContacts={externalContacts} readOnly={!perm.canManageAppointments} onSave={saveAppt} onDelete={deleteAppt} onClose={() => setApptModal(null)} />}
       {contactModal && perm.canManageContacts && <ContactModal contact={contactModal.contact} onSave={saveContact} onDelete={deleteContact} onClose={() => setContactModal(null)} />}
       {requestModal && <RequestModal members={members} externalContacts={externalContacts} projects={projects} currentMemberId={connectedAs} onSave={saveRequest} onClose={() => setRequestModal(null)} />}

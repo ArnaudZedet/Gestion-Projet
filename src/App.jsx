@@ -61,9 +61,10 @@ const FUNCTIONS = ['Manipulateur', 'Secrétaire', 'Aide manipulateur', 'Médecin
 
 // Analyse simple d'un fichier CSV (gère , et ; comme séparateur, et les guillemets)
 function parseCSV(text) {
-  const lines = text.split(/\r\n|\n|\r/).filter(l => l.trim().length > 0);
-  if (lines.length === 0) return { header: [], rows: [] };
-  const delimiter = (lines[0].match(/;/g) || []).length >= (lines[0].match(/,/g) || []).length ? ';' : ',';
+  const clean = text.replace(/^\uFEFF/, ''); // certains exports Excel ajoutent un caractère invisible en tout début de fichier
+  const rawLines = clean.split(/\r\n|\n|\r/);
+  const sample = rawLines.find(l => /[A-Za-zÀ-ÿ]/.test(l)) || rawLines[0] || '';
+  const delimiter = (sample.match(/;/g) || []).length >= (sample.match(/,/g) || []).length ? ';' : ',';
   const splitLine = (line) => {
     const cells = []; let cur = ''; let inQuotes = false;
     for (let i = 0; i < line.length; i++) {
@@ -75,22 +76,47 @@ function parseCSV(text) {
     cells.push(cur.trim());
     return cells;
   };
-  const header = splitLine(lines[0]).map(h => h.toLowerCase());
-  const rows = lines.slice(1).map(splitLine);
+  // On ignore les lignes entièrement vides (ex : lignes de séparateurs seuls ";;") avant de choisir l'en-tête
+  const parsed = rawLines.map(splitLine).filter(cells => cells.some(c => c !== ''));
+  if (parsed.length === 0) return { header: [], rows: [] };
+  const header = parsed[0];
+  const rows = parsed.slice(1);
   return { header, rows };
 }
-// Construit des collaborateurs "Utilisateur" (sans email) à partir d'un CSV nom/prénom/profession
+const stripAccents = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+// Certains exports Mac/Excel ne sont pas en UTF-8 (accents mal lus) ; on essaie plusieurs encodages
+// et on garde celui qui produit le moins de caractères invalides.
+function decodeBestEffort(buffer) {
+  const attempts = ['utf-8', 'macintosh', 'windows-1252'].map(label => {
+    try {
+      const text = new TextDecoder(label, { fatal: false }).decode(buffer);
+      return { text, bad: (text.match(/\uFFFD/g) || []).length };
+    } catch (e) { return null; }
+  }).filter(Boolean);
+  attempts.sort((a, b) => a.bad - b.bad);
+  return attempts.length ? attempts[0].text : '';
+}
+// Construit des collaborateurs "Utilisateur" (sans email) à partir d'un CSV nom/prénom/profession.
+// Si aucune colonne reconnue, on suppose : colonne 1 = nom, colonne 2 = profession.
 function membersFromCSV(text) {
   const { header, rows } = parseCSV(text);
-  const idxFirst = header.findIndex(h => h.includes('prénom') || h.includes('prenom'));
-  const idxLast = header.findIndex(h => (h === 'nom' || h.includes('nom de famille')) && !h.includes('prénom') && !h.includes('prenom'));
-  const idxFull = header.findIndex(h => h.includes('nom complet') || h === 'name' || h.includes('nom et prénom'));
-  const idxProf = header.findIndex(h => h.includes('profession') || h.includes('fonction') || h.includes('métier') || h.includes('metier') || h.includes('poste'));
+  const h = header.map(stripAccents);
+  const idxFirst = h.findIndex(x => x.includes('prenom'));
+  const idxLast = h.findIndex(x => (x === 'nom' || x.includes('nom de famille')) && !x.includes('prenom'));
+  const idxFull = h.findIndex(x => x.includes('nom complet') || x === 'name' || x.includes('nom et prenom'));
+  const idxProf = h.findIndex(x => x.includes('profession') || x.includes('fonction') || x.includes('metier') || x.includes('poste'));
+  const hasNameColumn = idxFirst >= 0 || idxLast >= 0 || idxFull >= 0;
+
   return rows.map(row => {
-    const name = idxFull >= 0 ? row[idxFull] : `${idxFirst >= 0 ? row[idxFirst] : ''} ${idxLast >= 0 ? row[idxLast] : ''}`.trim();
-    return {
-      id: uid(), name, role: idxProf >= 0 ? row[idxProf] : '', email: '', accessLevel: 'utilisateur', external: false,
-    };
+    let name, role;
+    if (hasNameColumn) {
+      name = idxFull >= 0 ? row[idxFull] : `${idxFirst >= 0 ? row[idxFirst] : ''} ${idxLast >= 0 ? row[idxLast] : ''}`.trim();
+      role = idxProf >= 0 ? row[idxProf] : '';
+    } else {
+      name = row[0] || '';
+      role = row[1] || '';
+    }
+    return { id: uid(), name, role, email: '', accessLevel: 'utilisateur', external: false };
   }).filter(m => m.name);
 }
 
@@ -1404,11 +1430,12 @@ function TeamView({ members, tasks, perm, editMember, newMember, onImport }) {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      const newMembers = membersFromCSV(String(reader.result));
+      const text = decodeBestEffort(reader.result);
+      const newMembers = membersFromCSV(text);
       if (newMembers.length === 0) { setImportMsg("Aucune ligne valide trouvée dans le fichier."); }
       else { onImport(newMembers); setImportMsg(`${newMembers.length} collaborateur${newMembers.length !== 1 ? 's' : ''} importé${newMembers.length !== 1 ? 's' : ''} (sans email, en rôle Utilisateur — à compléter).`); }
     };
-    reader.readAsText(file, 'UTF-8');
+    reader.readAsArrayBuffer(file);
     e.target.value = '';
   };
 

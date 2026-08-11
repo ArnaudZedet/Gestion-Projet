@@ -1793,9 +1793,12 @@ function GanttView({ tasks, projects, members, openTask }) {
 function RaciView({ tasks, projects, members, perm, updateRaci }) {
   const [filterProject, setFilterProject] = useState(projects[0]?.id || 'all');
   const list = tasks.filter(t => filterProject === 'all' || t.projectId === filterProject);
+  const participantIds = new Set();
+  list.forEach(t => Object.keys(t.raci || {}).forEach(id => participantIds.add(id)));
+  const actualParticipants = members.filter(m => participantIds.has(m.id));
   const relevantProjectIds = filterProject === 'all' ? new Set(projects.map(p => p.id)) : new Set([filterProject]);
   const projectMembers = members.filter(m => teamOfProjects(relevantProjectIds, tasks, projects).has(m.id));
-  const visibleMembers = projectMembers.length > 0 ? projectMembers : members;
+  const visibleMembers = actualParticipants.length > 0 ? actualParticipants : (projectMembers.length > 0 ? projectMembers : members);
   const cycle = (task, memberId) => {
     if (!perm.canEditRaci) return;
     const current = task.raci?.[memberId] || '';

@@ -1790,6 +1790,9 @@ function GanttView({ tasks, projects, members, openTask }) {
 function RaciView({ tasks, projects, members, perm, updateRaci }) {
   const [filterProject, setFilterProject] = useState(projects[0]?.id || 'all');
   const list = tasks.filter(t => filterProject === 'all' || t.projectId === filterProject);
+  const relevantProjectIds = filterProject === 'all' ? new Set(projects.map(p => p.id)) : new Set([filterProject]);
+  const projectMembers = members.filter(m => teamOfProjects(relevantProjectIds, tasks, projects).has(m.id));
+  const visibleMembers = projectMembers.length > 0 ? projectMembers : members;
   const cycle = (task, memberId) => {
     if (!perm.canEditRaci) return;
     const current = task.raci?.[memberId] || '';
@@ -1813,7 +1816,7 @@ function RaciView({ tasks, projects, members, perm, updateRaci }) {
           <table className="text-sm min-w-full">
             <thead><tr className="border-b border-slate-100">
               <th className="text-left text-xs font-medium text-slate-400 px-4 py-2.5 sticky left-0 bg-white">Tâche</th>
-              {members.map(m => <th key={m.id} className="px-2 py-2.5 text-center"><div className="flex flex-col items-center gap-1"><Avatar name={m.name} size={22} /><span className="text-[10px] text-slate-400 max-w-[64px] truncate">{m.name.split(' ')[0]}</span></div></th>)}
+              {visibleMembers.map(m => <th key={m.id} className="px-2 py-2.5 text-center"><div className="flex flex-col items-center gap-1"><Avatar name={m.name} size={22} /><span className="text-[10px] text-slate-400 max-w-[64px] truncate">{m.name.split(' ')[0]}</span></div></th>)}
             </tr></thead>
             <tbody>
               {list.map(t => (
@@ -1821,7 +1824,7 @@ function RaciView({ tasks, projects, members, perm, updateRaci }) {
                   <td className="px-4 py-2 sticky left-0 bg-white text-xs font-medium text-slate-600 max-w-[220px] truncate flex items-center gap-1.5">
                     {t.isGovernance && <GovIcon id={t.governanceType} size={11} className="text-purple-500 shrink-0" />}{t.title}
                   </td>
-                  {members.map(m => {
+                  {visibleMembers.map(m => {
                     const v = t.raci?.[m.id] || '';
                     const lvl = RACI_LEVELS.find(r => r.id === v);
                     return (

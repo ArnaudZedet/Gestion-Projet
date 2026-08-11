@@ -296,8 +296,8 @@ const ROW_MAPPERS = {
   },
   projects: {
     table: 'projects',
-    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, team_ids: p.teamIds || [], start_date: d(p.startDate), end_date: d(p.endDate) }),
-    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', teamIds: r.team_ids || [], startDate: r.start_date || '', endDate: r.end_date || '' }),
+    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate) }),
+    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '' }),
   },
   tasks: {
     table: 'tasks',
@@ -898,11 +898,12 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 /*  Fiche projet — création avec équipe + conduite de projet automatique  */
 /* ---------------------------------------------------------------------- */
 
-function ProjectModal({ project, members, tasks, currentMemberId, onSave, onDelete, onClose }) {
+function ProjectModal({ project, members, externalContacts, tasks, currentMemberId, onSave, onDelete, onClose }) {
   const isNew = !project;
-  const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: [], startDate: '', endDate: '' });
+  const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: [], externalIds: [], startDate: '', endDate: '' });
   const [genGovernance, setGenGovernance] = useState(false);
   const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
+  const toggleExternal = (id) => setForm(f => ({ ...f, externalIds: (f.externalIds || []).includes(id) ? f.externalIds.filter(x => x !== id) : [...(f.externalIds || []), id] }));
 
   const handleSubmit = () => {
     const id = form.id || uid();
@@ -934,6 +935,20 @@ function ProjectModal({ project, members, tasks, currentMemberId, onSave, onDele
               </button>
             );
           })}
+        </div>
+      </Field>
+      <Field label="Contacts externes associés">
+        <div className="flex flex-wrap gap-1.5">
+          {(externalContacts || []).map(c => {
+            const active = (form.externalIds || []).includes(c.id);
+            return (
+              <button key={c.id} type="button" onClick={() => toggleExternal(c.id)}
+                className={`text-xs px-2.5 py-1.5 rounded-full border flex items-center gap-1.5 ${active ? 'bg-purple-50 border-purple-200 text-purple-700' : 'bg-white border-slate-200 text-slate-500'}`}>
+                <Building2 size={12} /> {c.name}
+              </button>
+            );
+          })}
+          {(!externalContacts || externalContacts.length === 0) && <span className="text-xs text-slate-400">Aucun contact externe enregistré (onglet Contacts externes)</span>}
         </div>
       </Field>
       <div className="grid grid-cols-2 gap-3">
@@ -1423,6 +1438,9 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
                 <button onClick={() => newTask(g.project.id)} className="text-slate-300 hover:text-blue-600 p-0.5" title="Nouvelle tâche dans ce projet">
                   <Plus size={12} />
                 </button>
+              )}
+              {g.project.externalIds && g.project.externalIds.length > 0 && (
+                <span className="text-[10px] text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded-full flex items-center gap-1"><Building2 size={10} />{g.project.externalIds.length}</span>
               )}
             </div>
           )}
@@ -2262,7 +2280,7 @@ function ReferentApp({ session, onSignOut }) {
 
       {taskModal && <TaskModal task={taskModal.task} initialProjectId={taskModal.presetProjectId} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} onSave={saveTask} onDelete={deleteTask} onClaim={claimTask} onDuplicate={duplicateTask} onClose={() => setTaskModal(null)} />}
       {memberModal && perm.canManageTeam && <MemberModal member={memberModal.member} onSave={saveMember} onDelete={deleteMember} onClose={() => setMemberModal(null)} />}
-      {projectModal && perm.canCreateProject && <ProjectModal project={projectModal.project} members={members} tasks={tasks} currentMemberId={connectedAs} onSave={saveProject} onDelete={deleteProject} onClose={() => setProjectModal(null)} />}
+      {projectModal && perm.canCreateProject && <ProjectModal project={projectModal.project} members={members} externalContacts={externalContacts} tasks={tasks} currentMemberId={connectedAs} onSave={saveProject} onDelete={deleteProject} onClose={() => setProjectModal(null)} />}
       {apptModal && <AppointmentModal appointment={apptModal.appointment} members={members} externalContacts={externalContacts} readOnly={!perm.canManageAppointments} onSave={saveAppt} onDelete={deleteAppt} onClose={() => setApptModal(null)} />}
       {contactModal && perm.canManageContacts && <ContactModal contact={contactModal.contact} onSave={saveContact} onDelete={deleteContact} onClose={() => setContactModal(null)} />}
       {requestModal && <RequestModal members={members} externalContacts={externalContacts} projects={projects} currentMemberId={connectedAs} onSave={saveRequest} onClose={() => setRequestModal(null)} />}

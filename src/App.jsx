@@ -114,6 +114,23 @@ const repeatLabel = (unit, every) => {
   if (unit === 'an') return n === 1 ? 'Tous les ans' : `Tous les ${n} ans`;
   return '';
 };
+// Projette les prochaines occurrences d'une tâche répétitive (affichage uniquement,
+// aucune tâche réelle n'est créée — la vraie occurrence suivante n'apparaît qu'à la validation).
+function projectOccurrences(task, monthsAhead = 12, maxCount = 60) {
+  if (!task.deadline) return [];
+  if (!task.repeatUnit || task.repeatUnit === 'aucune') return [task.deadline];
+  const horizon = addMonths(todayISO(), monthsAhead);
+  const dates = [task.deadline];
+  let cur = task.deadline;
+  let count = 0;
+  while (count < maxCount) {
+    cur = shiftByRepeat(cur, task.repeatUnit, task.repeatEvery);
+    if (cur > horizon) break;
+    dates.push(cur);
+    count++;
+  }
+  return dates;
+}
 
 // Étapes types de conduite de projet — deviennent de vraies tâches (isGovernance) mêlées aux tâches du projet
 const GOVERNANCE_TYPES = [
@@ -272,8 +289,8 @@ const ROW_MAPPERS = {
 async function fetchAll(key) {
   const { table, fromRow } = ROW_MAPPERS[key];
   const { data, error } = await supabase.from(table).select('*');
-  if (error) { console.error('Erreur de chargement', key, error); return null; }
-  return (data || []).map(fromRow);
+  if (error) { console.error('Erreur de chargement', key, error); return { error: true, items: [] }; }
+  return { error: false, items: (data || []).map(fromRow) };
 }
 async function loadAll() {
   const out = {};
@@ -1436,7 +1453,12 @@ function MonthCalendar({ year, month, dayTasks, dayAppts, onPrev, onNext, openTa
                 ))}
                 {ts.slice(0, 2).map(t => {
                   const pr = PRIORITIES.find(p => p.id === t.priority);
-                  return <button key={t.id} onClick={() => openTask(t)} style={{ background: pr.bg, color: pr.color }} className="w-full text-left text-[10px] rounded px-1 py-0.5 truncate block">{t.title}</button>;
+                  const repeating = t.repeatUnit && t.repeatUnit !== 'aucune';
+                  return (
+                    <button key={t.id} onClick={() => openTask(t)} style={{ background: pr.bg, color: pr.color }} className="w-full text-left text-[10px] rounded px-1 py-0.5 truncate flex items-center gap-0.5">
+                      {repeating && <Repeat size={9} className="shrink-0" />}<span className="truncate">{t.title}</span>
+                    </button>
+                  );
                 })}
                 {(ts.length + as.length) > 4 && <div className="text-[9px] text-slate-400 px-1">+{ts.length + as.length - 4}</div>}
               </div>
@@ -1462,14 +1484,24 @@ function PlanningView({ members, tasks, projects, appointments, perm, currentMem
   const myAppts = appointments.filter(a => a.participants.includes(selected));
   const myOpenPool = tasks.filter(t => t.assignMode === 'pool' && !t.assigneeId && t.pool && t.pool.includes(selected));
 
-  const dayTasks = {}; mine.forEach(t => { if (t.deadline) (dayTasks[t.deadline] = dayTasks[t.deadline] || []).push(t); });
+  // Planning = uniquement les tâches ponctuelles (un seul jour, comme un rendez-vous) : pas de startDate,
+  // ou startDate identique à l'échéance. Les tâches qui s'étalent sur plusieurs jours restent dans Tâches/Gantt.
+  const punctualMine = mine.filter(t => t.deadline && (!t.startDate || t.startDate === t.deadline));
+
+  const [exportTime, setExportTime] = useState('09:00');
+
+  const dayTasks = {};
+  punctualMine.forEach(t => {
+    projectOccurrences(t).forEach(date => { (dayTasks[date] = dayTasks[date] || []).push(t); });
+  });
   const dayAppts = {}; myAppts.forEach(a => (dayAppts[a.date] = dayAppts[a.date] || []).push(a));
 
   const handleExportIcs = () => {
-    const events = [
-      ...mine.filter(t => t.deadline).map(t => ({ title: t.title, date: t.deadline, time: '09:00', location: '', notes: t.description })),
-      ...myAppts.map(a => ({ title: a.title, date: a.date, time: a.time, location: a.location, notes: a.notes })),
-    ];
+    const events = [];
+    punctualMine.forEach(t => {
+      projectOccurrences(t).forEach(date => events.push({ title: t.title, date, time: exportTime, location: '', notes: t.description }));
+    });
+    myAppts.forEach(a => events.push({ title: a.title, date: a.date, time: a.time, location: a.location, notes: a.notes }));
     if (events.length === 0) return;
     downloadTextFile(`planning-${(person?.name || 'export').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.ics`, buildICSMulti(events), 'text/calendar');
   };
@@ -1483,9 +1515,13 @@ function PlanningView({ members, tasks, projects, appointments, perm, currentMem
             <div className="min-w-0"><div className={`text-xs font-medium truncate ${selected === m.id ? 'text-blue-700' : 'text-slate-600'}`}>{m.name}</div><div className="text-xs text-slate-400 truncate">{m.role}</div></div>
           </button>
         ))}
-        <button onClick={handleExportIcs} className="w-full mt-2 pt-2 border-t border-slate-100 text-xs font-medium text-slate-500 hover:text-blue-700 flex items-center justify-center gap-1.5 py-2">
-          <Download size={13} /> Exporter (.ics)
-        </button>
+        <div className="mt-2 pt-2 border-t border-slate-100">
+          <div className="text-[10px] text-slate-400 px-1 mb-1">Horaire pour les tâches d'un jour</div>
+          <input type="time" value={exportTime} onChange={e => setExportTime(e.target.value)} className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-600 mb-1.5" />
+          <button onClick={handleExportIcs} className="w-full text-xs font-medium text-slate-500 hover:text-blue-700 flex items-center justify-center gap-1.5 py-1.5">
+            <Download size={13} /> Exporter (.ics)
+          </button>
+        </div>
       </div>
       <div className="md:col-span-3 space-y-4">
         {perm.canManageAppointments && (
@@ -1748,6 +1784,7 @@ function navFor(perm) {
 
 function ReferentApp({ session, onSignOut }) {
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [notRecognized, setNotRecognized] = useState(false);
   const [members, setMembers] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -1770,13 +1807,13 @@ function ReferentApp({ session, onSignOut }) {
   useEffect(() => {
     (async () => {
       const data = await loadAll();
-      let m = data.members, p = data.projects, t = data.tasks, a = data.appointments, ec = data.externalContacts, tr = data.taskRequests;
-      if (!m || m.length === 0) { m = seedMembers(myEmail); await insertRows('members', m); }
-      if (!p || p.length === 0) { p = seedProjects(m); await insertRows('projects', p); }
-      if (!t || t.length === 0) { t = seedTasks(m, p); await insertRows('tasks', t); }
-      if (!ec || ec.length === 0) { ec = seedExternalContacts(); await insertRows('externalContacts', ec); }
-      if (!a || a.length === 0) { a = seedAppointments(m, ec); await insertRows('appointments', a); }
-      if (!tr) tr = [];
+      if (Object.values(data).some(r => r.error)) { setLoadError(true); setLoading(false); return; }
+      let m = data.members.items, p = data.projects.items, t = data.tasks.items, a = data.appointments.items, ec = data.externalContacts.items, tr = data.taskRequests.items;
+      if (m.length === 0) { m = seedMembers(myEmail); await insertRows('members', m); }
+      if (p.length === 0) { p = seedProjects(m); await insertRows('projects', p); }
+      if (t.length === 0) { t = seedTasks(m, p); await insertRows('tasks', t); }
+      if (ec.length === 0) { ec = seedExternalContacts(); await insertRows('externalContacts', ec); }
+      if (a.length === 0) { a = seedAppointments(m, ec); await insertRows('appointments', a); }
       setMembers(m); setProjects(p); setTasks(t); setAppointments(a); setExternalContacts(ec); setTaskRequests(tr);
       const matched = m.find(x => (x.email || '').toLowerCase() === myEmail);
       if (matched) {
@@ -1949,6 +1986,17 @@ function ReferentApp({ session, onSignOut }) {
   const pendingRequests = taskRequests.filter(r => r.status === 'en_attente').length;
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2" size={18} /> Chargement…</div>;
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center text-center gap-3 p-8">
+        <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center"><AlertTriangle size={20} className="text-red-500" /></div>
+        <div className="text-sm font-semibold text-slate-700">Impossible de charger vos données</div>
+        <div className="text-xs text-slate-400 max-w-sm">Un problème de connexion à la base de données est survenu. Vos données n'ont pas été touchées. Réessayez dans quelques instants.</div>
+        <button onClick={() => window.location.reload()} className="text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg mt-2">Réessayer</button>
+      </div>
+    );
+  }
 
   if (notRecognized) {
     return (

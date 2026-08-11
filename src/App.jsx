@@ -6,7 +6,7 @@ import {
   Search, Loader2, Inbox, GanttChartSquare, Grid3x3, MapPin, Lock, Target, Repeat,
   ClipboardList, Send, XCircle, Building2, Mail, Check,
   Flag, PlayCircle, ShieldAlert, GraduationCap, Milestone as MilestoneIcon, Megaphone, ClipboardCheck,
-  ChevronLeft, ChevronRight, FolderPlus, List as ListIcon, Download, Copy
+  ChevronLeft, ChevronRight, FolderPlus, List as ListIcon, Download, Copy, Upload
 } from 'lucide-react';
 
 /* ---------------------------------------------------------------------- */
@@ -58,6 +58,41 @@ const isImportant = (t) => t.importance === 'critique' || t.importance === 'elev
 
 const PROJECT_COLORS = ['#2563EB', '#0D9488', '#B54708', '#7C3AED', '#B42318', '#0369A1', '#4D7C0F'];
 const FUNCTIONS = ['Manipulateur', 'Secrétaire', 'Aide manipulateur', 'Médecin'];
+
+// Analyse simple d'un fichier CSV (gère , et ; comme séparateur, et les guillemets)
+function parseCSV(text) {
+  const lines = text.split(/\r\n|\n|\r/).filter(l => l.trim().length > 0);
+  if (lines.length === 0) return { header: [], rows: [] };
+  const delimiter = (lines[0].match(/;/g) || []).length >= (lines[0].match(/,/g) || []).length ? ';' : ',';
+  const splitLine = (line) => {
+    const cells = []; let cur = ''; let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { inQuotes = !inQuotes; continue; }
+      if (c === delimiter && !inQuotes) { cells.push(cur.trim()); cur = ''; continue; }
+      cur += c;
+    }
+    cells.push(cur.trim());
+    return cells;
+  };
+  const header = splitLine(lines[0]).map(h => h.toLowerCase());
+  const rows = lines.slice(1).map(splitLine);
+  return { header, rows };
+}
+// Construit des collaborateurs "Utilisateur" (sans email) à partir d'un CSV nom/prénom/profession
+function membersFromCSV(text) {
+  const { header, rows } = parseCSV(text);
+  const idxFirst = header.findIndex(h => h.includes('prénom') || h.includes('prenom'));
+  const idxLast = header.findIndex(h => (h === 'nom' || h.includes('nom de famille')) && !h.includes('prénom') && !h.includes('prenom'));
+  const idxFull = header.findIndex(h => h.includes('nom complet') || h === 'name' || h.includes('nom et prénom'));
+  const idxProf = header.findIndex(h => h.includes('profession') || h.includes('fonction') || h.includes('métier') || h.includes('metier') || h.includes('poste'));
+  return rows.map(row => {
+    const name = idxFull >= 0 ? row[idxFull] : `${idxFirst >= 0 ? row[idxFirst] : ''} ${idxLast >= 0 ? row[idxLast] : ''}`.trim();
+    return {
+      id: uid(), name, role: idxProf >= 0 ? row[idxProf] : '', email: '', accessLevel: 'utilisateur', external: false,
+    };
+  }).filter(m => m.name);
+}
 
 const REQUEST_ORIGINS = [
   { id: 'interne', label: 'De ma part' },
@@ -1354,14 +1389,33 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
 /*  Équipe & Contacts externes                                            */
 /* ---------------------------------------------------------------------- */
 
-function TeamView({ members, tasks, perm, editMember, newMember }) {
+function TeamView({ members, tasks, perm, editMember, newMember, onImport }) {
+  const fileInputRef = React.useRef(null);
+  const [importMsg, setImportMsg] = useState('');
+
+  const handleFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const newMembers = membersFromCSV(String(reader.result));
+      if (newMembers.length === 0) { setImportMsg("Aucune ligne valide trouvée dans le fichier."); }
+      else { onImport(newMembers); setImportMsg(`${newMembers.length} collaborateur${newMembers.length !== 1 ? 's' : ''} importé${newMembers.length !== 1 ? 's' : ''} (sans email, en rôle Utilisateur — à compléter).`); }
+    };
+    reader.readAsText(file, 'UTF-8');
+    e.target.value = '';
+  };
+
   return (
     <div>
       {perm.canManageTeam && (
-        <div className="flex items-center justify-end mb-4">
+        <div className="flex items-center justify-end gap-2 mb-2">
+          <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleFile} />
+          <button onClick={() => fileInputRef.current?.click()} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Upload size={14} /> Importer un fichier (CSV)</button>
           <button onClick={newMember} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Plus size={14} /> Ajouter un collaborateur</button>
         </div>
       )}
+      {importMsg && <div className="text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2 mb-4">{importMsg}</div>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {members.map(m => {
           const active = tasks.filter(t => isTaskOfMine(t, m.id) && t.status !== 'termine').length;
@@ -1861,6 +1915,11 @@ function ReferentApp({ session, onSignOut }) {
     upsertRow('tasks', updated);
   };
 
+  const importMembers = (newMembers) => {
+    setMembers(prev => [...prev, ...newMembers]);
+    insertRows('members', newMembers);
+  };
+
   const saveMember = (m) => {
     const exists = members.some(x => x.id === m.id);
     setMembers(prev => exists ? prev.map(x => x.id === m.id ? m : x) : [...prev, m]);
@@ -2080,7 +2139,7 @@ function ReferentApp({ session, onSignOut }) {
             updateRaci={updateRaci} />}
           {view === 'priorisation' && <PrioritisationView tasks={perm.isManager ? tasks : tasks.filter(t => myProjectIds(connectedAs, tasks, projects).has(t.projectId) || isTaskOfMine(t, connectedAs))} members={members} openTask={(t) => setTaskModal({ task: t })} />}
           {view === 'requests' && <RequestsView requests={perm.isManager ? taskRequests : perm.isReferent ? taskRequests.filter(r => teamOfProjects(myProjectIds(connectedAs, tasks, projects), tasks, projects).has(r.requesterMemberId)) : taskRequests.filter(r => r.requesterMemberId === connectedAs)} members={members} externalContacts={externalContacts} perm={perm} onApprove={approveRequest} onReject={rejectRequest} newRequest={() => setRequestModal({})} />}
-          {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} />}
+          {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} onImport={importMembers} />}
           {view === 'contacts' && <ContactsView contacts={externalContacts} perm={perm} editContact={(c) => setContactModal({ contact: c })} newContact={() => setContactModal({ contact: null })} />}
         </div>
       </div>

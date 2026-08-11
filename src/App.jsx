@@ -616,9 +616,9 @@ function RaciPicker({ memberId, value, disabled, onChange }) {
   );
 }
 
-function TaskModal({ task, members, projects, perm, currentMemberId, onSave, onDelete, onClaim, onDuplicate, onClose }) {
+function TaskModal({ task, initialProjectId, members, projects, perm, currentMemberId, onSave, onDelete, onClaim, onDuplicate, onClose }) {
   const [form, setForm] = useState(task || {
-    title: '', description: '', projectId: projects[0]?.id || '',
+    title: '', description: '', projectId: initialProjectId || projects[0]?.id || '',
     assignMode: 'individuel', assigneeId: '', pool: [], raci: {},
     priority: 'normale', importance: 'moyenne', scope: 'courte', status: 'a_faire', startDate: '', deadline: '', time: '',
     repeatUnit: 'aucune', repeatEvery: 1,
@@ -784,10 +784,10 @@ function TaskModal({ task, members, projects, perm, currentMemberId, onSave, onD
       </div>
       <div className="grid grid-cols-3 gap-3">
         <Field label="Date de début (pour Durée des projets)">
-          <input disabled={locked} type="date" className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} />
+          <input disabled={locked} type="date" min={todayISO()} className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} />
         </Field>
         <Field label="Échéance">
-          <input disabled={locked} type="date" className={inputCls} value={form.deadline || ''} onChange={e => setForm({ ...form, deadline: e.target.value })} />
+          <input disabled={locked} type="date" min={form.startDate || todayISO()} className={inputCls} value={form.deadline || ''} onChange={e => setForm({ ...form, deadline: e.target.value })} />
         </Field>
         <Field label="Heure (si tâche d'un jour)">
           <input disabled={locked} type="time" className={inputCls} value={form.time || ''} onChange={e => setForm({ ...form, time: e.target.value })} />
@@ -937,8 +937,8 @@ function ProjectModal({ project, members, tasks, currentMemberId, onSave, onDele
         </div>
       </Field>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Début du projet (optionnel)"><input type="date" className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} /></Field>
-        <Field label="Fin du projet (optionnel)"><input type="date" className={inputCls} value={form.endDate || ''} onChange={e => setForm({ ...form, endDate: e.target.value })} /></Field>
+        <Field label="Début du projet (optionnel)"><input type="date" min={todayISO()} className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} /></Field>
+        <Field label="Fin du projet (optionnel)"><input type="date" min={form.startDate || todayISO()} className={inputCls} value={form.endDate || ''} onChange={e => setForm({ ...form, endDate: e.target.value })} /></Field>
       </div>
       <div className="text-xs text-slate-400 -mt-2.5 mb-3.5">Sert à afficher la durée du projet dans "Durée des projets", même sans tâches ni étapes de conduite.</div>
       {isNew && (
@@ -1401,7 +1401,7 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
         </select>
         <div className="ml-auto flex gap-2">
           {perm.canCreateProject && <button onClick={newProject} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><FolderPlus size={14} /> Nouveau projet</button>}
-          {perm.canCreateTask && <button onClick={newTask} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Plus size={14} /> Nouvelle tâche</button>}
+          {perm.canCreateTask && <button onClick={() => newTask(filterProject !== 'all' ? filterProject : undefined)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Plus size={14} /> Nouvelle tâche</button>}
         </div>
       </div>
 
@@ -1417,6 +1417,11 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
               {perm.canCreateProject && (
                 <button onClick={() => editProject(g.project)} className="text-slate-300 hover:text-slate-500 p-0.5" title="Modifier ou supprimer ce projet">
                   <Pencil size={11} />
+                </button>
+              )}
+              {perm.canCreateTask && (
+                <button onClick={() => newTask(g.project.id)} className="text-slate-300 hover:text-blue-600 p-0.5" title="Nouvelle tâche dans ce projet">
+                  <Plus size={12} />
                 </button>
               )}
             </div>
@@ -1562,19 +1567,18 @@ function MonthCalendar({ year, month, dayTasks, dayAppts, onPrev, onNext, openTa
             <div key={i} className={`min-h-[76px] rounded-lg border p-1 ${d ? 'border-slate-100' : 'border-transparent'} ${today ? 'bg-blue-50/50 border-blue-200' : ''}`}>
               {d && <div className={`text-[10px] mb-1 ${today ? 'text-blue-600 font-semibold' : 'text-slate-400'}`}>{d.getDate()}</div>}
               <div className="space-y-0.5">
-                {as.slice(0, 2).map(a => (
-                  <button key={a.id} onClick={() => openAppt(a)} className="w-full text-left text-[10px] bg-blue-100 text-blue-700 rounded px-1 py-0.5 truncate block">{a.time} {a.title}</button>
+                {as.map(a => (
+                  <button key={a.id} onClick={() => openAppt(a)} className="w-full text-left text-[10px] leading-tight bg-blue-100 text-blue-700 rounded px-1 py-0.5 block whitespace-normal break-words">{a.time} {a.title}</button>
                 ))}
-                {ts.slice(0, 2).map(t => {
+                {ts.map(t => {
                   const pr = PRIORITIES.find(p => p.id === t.priority);
                   const repeating = t.repeatUnit && t.repeatUnit !== 'aucune';
                   return (
-                    <button key={t.id} onClick={() => openTask(t)} style={{ background: pr.bg, color: pr.color }} className="w-full text-left text-[10px] rounded px-1 py-0.5 truncate flex items-center gap-0.5">
-                      {repeating && <Repeat size={9} className="shrink-0" />}<span className="truncate">{t.time ? `${t.time} ` : ''}{t.title}</span>
+                    <button key={t.id} onClick={() => openTask(t)} style={{ background: pr.bg, color: pr.color }} className="w-full text-left text-[10px] leading-tight rounded px-1 py-0.5 flex items-start gap-0.5 whitespace-normal break-words">
+                      {repeating && <Repeat size={9} className="shrink-0 mt-0.5" />}<span>{t.time ? `${t.time} ` : ''}{t.title}</span>
                     </button>
                   );
                 })}
-                {(ts.length + as.length) > 4 && <div className="text-[9px] text-slate-400 px-1">+{ts.length + as.length - 4}</div>}
               </div>
             </div>
           );
@@ -1728,7 +1732,7 @@ function GanttView({ tasks, projects, members, openTask }) {
         <select className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 bg-white focus:outline-none" value={filterProject} onChange={e => setFilterProject(e.target.value)}>
           <option value="all">Tous les projets</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <span className="text-xs text-slate-400">Zone grisée = avant le début de la tâche · bandeau teinté sous le nom du projet = sa durée globale</span>
+        <span className="text-xs text-slate-400">Bandeau teinté sous le nom du projet = sa durée globale</span>
       </div>
       <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
         <div style={{ minWidth: 200 + trackWidth }}>
@@ -1766,7 +1770,6 @@ function GanttView({ tasks, projects, members, openTask }) {
                       <span className="text-xs text-slate-600 truncate">{t.title}</span>
                     </div>
                     <div style={{ width: trackWidth }} className="relative h-9">
-                      {offset > 0 && <div style={{ left: 0, width: offset * DAY_W }} className="absolute top-1.5 h-6 rounded-md bg-slate-100" title="Avant le début de la tâche" />}
                       {todayOffset >= 0 && todayOffset < totalDays && <div style={{ left: todayOffset * DAY_W + DAY_W / 2 }} className="absolute top-0 bottom-0 w-px bg-red-300 z-10" />}
                       <button onClick={() => openTask(t)} style={{ left: offset * DAY_W + 2, width: span * DAY_W - 4, background: t.isGovernance ? '#7C3AED' : pr.bar }}
                         className="absolute top-1.5 h-6 rounded-md text-white text-[10px] font-medium flex items-center px-2 truncate hover:brightness-95"
@@ -2239,7 +2242,7 @@ function ReferentApp({ session, onSignOut }) {
 
         <div className="flex-1 overflow-y-auto p-6">
           {view === 'dashboard' && <Dashboard tasks={tasks} members={members} appointments={appointments} connectedAs={connectedAs} openTask={(t) => setTaskModal({ task: t })} onClaim={claimTask} />}
-          {view === 'tasks' && <TasksView tasks={tasks} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={() => setTaskModal({ task: null })} newProject={() => setProjectModal({ project: null })} editProject={(p) => setProjectModal({ project: p })} />}
+          {view === 'tasks' && <TasksView tasks={tasks} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={(projectId) => setTaskModal({ task: null, presetProjectId: projectId })} newProject={() => setProjectModal({ project: null })} editProject={(p) => setProjectModal({ project: p })} />}
           {view === 'planning' && <PlanningView members={members} tasks={tasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
           {view === 'gantt' && <GanttView tasks={tasks} members={members}
             projects={perm.isManager ? projects : projects.filter(p => myProjectIds(connectedAs, tasks, projects).has(p.id))}
@@ -2254,7 +2257,7 @@ function ReferentApp({ session, onSignOut }) {
         </div>
       </div>
 
-      {taskModal && <TaskModal task={taskModal.task} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} onSave={saveTask} onDelete={deleteTask} onClaim={claimTask} onDuplicate={duplicateTask} onClose={() => setTaskModal(null)} />}
+      {taskModal && <TaskModal task={taskModal.task} initialProjectId={taskModal.presetProjectId} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} onSave={saveTask} onDelete={deleteTask} onClaim={claimTask} onDuplicate={duplicateTask} onClose={() => setTaskModal(null)} />}
       {memberModal && perm.canManageTeam && <MemberModal member={memberModal.member} onSave={saveMember} onDelete={deleteMember} onClose={() => setMemberModal(null)} />}
       {projectModal && perm.canCreateProject && <ProjectModal project={projectModal.project} members={members} tasks={tasks} currentMemberId={connectedAs} onSave={saveProject} onDelete={deleteProject} onClose={() => setProjectModal(null)} />}
       {apptModal && <AppointmentModal appointment={apptModal.appointment} members={members} externalContacts={externalContacts} readOnly={!perm.canManageAppointments} onSave={saveAppt} onDelete={deleteAppt} onClose={() => setApptModal(null)} />}

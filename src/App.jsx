@@ -48,7 +48,7 @@ const IMPORTANCE = [
   { id: 'faible',   label: 'Faible',   color: '#475467', bg: '#F1F2F4' },
 ];
 const SCOPES = [
-  { id: 'eclair',  label: 'Éclair (≤ 2h)',        short: 'Éclair' },
+  { id: 'eclair',  label: 'Rendez-vous (≤ 2h)',      short: 'RDV' },
   { id: 'courte',  label: 'Courte (quelques jours)', short: 'Courte' },
   { id: 'moyenne', label: 'Moyenne (quelques semaines)', short: 'Moyenne' },
   { id: 'longue',  label: 'Longue (plusieurs mois)', short: 'Longue' },
@@ -296,8 +296,8 @@ const ROW_MAPPERS = {
   },
   projects: {
     table: 'projects',
-    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, team_ids: p.teamIds || [] }),
-    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', teamIds: r.team_ids || [] }),
+    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, team_ids: p.teamIds || [], start_date: d(p.startDate), end_date: d(p.endDate) }),
+    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', teamIds: r.team_ids || [], startDate: r.start_date || '', endDate: r.end_date || '' }),
   },
   tasks: {
     table: 'tasks',
@@ -305,7 +305,7 @@ const ROW_MAPPERS = {
       id: t.id, title: t.title, description: t.description || null, project_id: t.projectId || null,
       assign_mode: t.assignMode, assignee_id: t.assigneeId || null, pool: t.pool || [], raci: t.raci || {},
       priority: t.priority, importance: t.importance, scope: t.scope, status: t.status,
-      start_date: d(t.startDate), deadline: d(t.deadline),
+      start_date: d(t.startDate), deadline: d(t.deadline), time: t.time || null,
       repeat_unit: t.repeatUnit, repeat_every: t.repeatEvery,
       is_governance: !!t.isGovernance, governance_type: t.governanceType || null, created_at: d(t.createdAt),
     }),
@@ -313,7 +313,7 @@ const ROW_MAPPERS = {
       id: r.id, title: r.title, description: r.description || '', projectId: r.project_id || '',
       assignMode: r.assign_mode, assigneeId: r.assignee_id || '', pool: r.pool || [], raci: r.raci || {},
       priority: r.priority, importance: r.importance, scope: r.scope, status: r.status,
-      startDate: r.start_date || '', deadline: r.deadline || '',
+      startDate: r.start_date || '', deadline: r.deadline || '', time: r.time || '',
       repeatUnit: r.repeat_unit, repeatEvery: r.repeat_every,
       isGovernance: !!r.is_governance, governanceType: r.governance_type || undefined, createdAt: r.created_at || '',
     }),
@@ -359,26 +359,36 @@ async function loadAll() {
   return out;
 }
 async function insertRows(key, items) {
-  if (!items || items.length === 0) return;
+  if (!items || items.length === 0) return true;
   const { table, toRow } = ROW_MAPPERS[key];
   const { error } = await supabase.from(table).insert(items.map(toRow));
-  if (error) console.error('Erreur de création', key, error);
+  if (error) { console.error('Erreur de création', key, error); return false; }
+  return true;
 }
 async function upsertRow(key, item) {
   const { table, toRow } = ROW_MAPPERS[key];
   const { error } = await supabase.from(table).upsert(toRow(item));
-  if (error) console.error('Erreur de sauvegarde', key, error);
+  if (error) { console.error('Erreur de sauvegarde', key, error); return false; }
+  return true;
 }
 async function upsertRows(key, items) {
-  if (!items || items.length === 0) return;
+  if (!items || items.length === 0) return true;
   const { table, toRow } = ROW_MAPPERS[key];
   const { error } = await supabase.from(table).upsert(items.map(toRow));
-  if (error) console.error('Erreur de sauvegarde', key, error);
+  if (error) { console.error('Erreur de sauvegarde', key, error); return false; }
+  return true;
 }
 async function deleteRow(key, id) {
   const { table } = ROW_MAPPERS[key];
   const { error } = await supabase.from(table).delete().eq('id', id);
-  if (error) console.error('Erreur de suppression', key, error);
+  if (error) { console.error('Erreur de suppression', key, error); return false; }
+  return true;
+}
+// Prévient l'utilisateur si un enregistrement Supabase échoue, au lieu de le laisser
+// silencieusement disparaître au prochain rechargement (c'est ce qui causait des
+// tâches "qui réapparaissent" après suppression/modification).
+function warnIfFailed(ok, action) {
+  if (!ok) window.alert(`⚠️ ${action} n'a pas pu être enregistré(e) en base (problème de connexion). Vérifiez votre connexion internet et réessayez — sinon la modification sera perdue au prochain rechargement.`);
 }
 
 
@@ -610,7 +620,7 @@ function TaskModal({ task, members, projects, perm, currentMemberId, onSave, onD
   const [form, setForm] = useState(task || {
     title: '', description: '', projectId: projects[0]?.id || '',
     assignMode: 'individuel', assigneeId: '', pool: [], raci: {},
-    priority: 'normale', importance: 'moyenne', scope: 'courte', status: 'a_faire', startDate: '', deadline: '',
+    priority: 'normale', importance: 'moyenne', scope: 'courte', status: 'a_faire', startDate: '', deadline: '', time: '',
     repeatUnit: 'aucune', repeatEvery: 1,
   });
 
@@ -644,6 +654,13 @@ function TaskModal({ task, members, projects, perm, currentMemberId, onSave, onD
     if (raci[id]) delete raci[id]; else raci[id] = 'R';
     return { ...f, raci };
   });
+  const selectAllParticipants = () => setForm(f => {
+    if (f.assignMode === 'pool') return { ...f, pool: availableMembers.map(m => m.id) };
+    const raci = { ...f.raci };
+    availableMembers.forEach(m => { if (!raci[m.id]) raci[m.id] = 'R'; });
+    return { ...f, raci };
+  });
+  const clearAllParticipants = () => setForm(f => f.assignMode === 'pool' ? { ...f, pool: [] } : { ...f, raci: {} });
   const setRaciRole = (id, role) => setForm(f => {
     const raci = { ...f.raci };
     if (role) raci[id] = role; else delete raci[id];
@@ -696,6 +713,11 @@ function TaskModal({ task, members, projects, perm, currentMemberId, onSave, onD
 
       {form.assignMode === 'pool' && (
         <Field label="Candidats (le premier qui la prend l'obtient)">
+          <div className="flex items-center justify-end gap-2 mb-1.5">
+            <button type="button" disabled={locked} onClick={selectAllParticipants} className="text-xs text-blue-600 hover:underline">Tout cocher</button>
+            <span className="text-slate-300">·</span>
+            <button type="button" disabled={locked} onClick={clearAllParticipants} className="text-xs text-slate-400 hover:underline">Tout décocher</button>
+          </div>
           <div className="flex flex-wrap gap-1.5">
             {availableMembers.map(m => {
               const active = form.pool.includes(m.id);
@@ -713,6 +735,11 @@ function TaskModal({ task, members, projects, perm, currentMemberId, onSave, onD
 
       {form.assignMode === 'equipe' && (
         <Field label="Participants et rôle de chacun (R/A/C/I)">
+          <div className="flex items-center justify-end gap-2 mb-1.5">
+            <button type="button" disabled={locked} onClick={selectAllParticipants} className="text-xs text-blue-600 hover:underline">Tout cocher</button>
+            <span className="text-slate-300">·</span>
+            <button type="button" disabled={locked} onClick={clearAllParticipants} className="text-xs text-slate-400 hover:underline">Tout décocher</button>
+          </div>
           <div className="space-y-1.5">
             {availableMembers.map(m => {
               const active = !!form.raci[m.id];
@@ -755,12 +782,15 @@ function TaskModal({ task, members, projects, perm, currentMemberId, onSave, onD
           </select>
         </Field>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <Field label="Date de début (pour Durée des projets)">
           <input disabled={locked} type="date" className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} />
         </Field>
         <Field label="Échéance">
           <input disabled={locked} type="date" className={inputCls} value={form.deadline || ''} onChange={e => setForm({ ...form, deadline: e.target.value })} />
+        </Field>
+        <Field label="Heure (si tâche d'un jour)">
+          <input disabled={locked} type="time" className={inputCls} value={form.time || ''} onChange={e => setForm({ ...form, time: e.target.value })} />
         </Field>
       </div>
       <Field label="Répétition">
@@ -870,16 +900,14 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 
 function ProjectModal({ project, members, tasks, currentMemberId, onSave, onDelete, onClose }) {
   const isNew = !project;
-  const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: [] });
-  const [genGovernance, setGenGovernance] = useState(isNew);
-  const [startDate, setStartDate] = useState(todayISO());
-  const [endDate, setEndDate] = useState(addDays(todayISO(), 90));
+  const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: [], startDate: '', endDate: '' });
+  const [genGovernance, setGenGovernance] = useState(false);
   const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
 
   const handleSubmit = () => {
     const id = form.id || uid();
     const projectObj = { ...form, id };
-    const governanceTasks = (isNew && genGovernance) ? buildGovernanceTasks(startDate, endDate, id, currentMemberId) : [];
+    const governanceTasks = (isNew && genGovernance && form.startDate && form.endDate) ? buildGovernanceTasks(form.startDate, form.endDate, id, currentMemberId) : [];
     onSave(projectObj, governanceTasks);
   };
 
@@ -908,21 +936,20 @@ function ProjectModal({ project, members, tasks, currentMemberId, onSave, onDele
           })}
         </div>
       </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Début du projet (optionnel)"><input type="date" className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} /></Field>
+        <Field label="Fin du projet (optionnel)"><input type="date" className={inputCls} value={form.endDate || ''} onChange={e => setForm({ ...form, endDate: e.target.value })} /></Field>
+      </div>
+      <div className="text-xs text-slate-400 -mt-2.5 mb-3.5">Sert à afficher la durée du projet dans "Durée des projets", même sans tâches ni étapes de conduite.</div>
       {isNew && (
         <div className="bg-slate-50 rounded-xl p-3.5 mb-3.5">
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-600 mb-2.5">
-            <input type="checkbox" checked={genGovernance} onChange={e => setGenGovernance(e.target.checked)} />
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
+            <input type="checkbox" checked={genGovernance} disabled={!form.startDate || !form.endDate} onChange={e => setGenGovernance(e.target.checked)} />
             Générer les étapes de conduite du projet type
           </label>
-          {genGovernance && (
-            <>
-              <div className="text-xs text-slate-400 mb-2.5">Préparation du changement, kick-off, démarrage, points de suivi, revue, clôture — créées comme tâches du projet, avec les bonnes dates.</div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Début du projet"><input type="date" className={inputCls} value={startDate} onChange={e => setStartDate(e.target.value)} /></Field>
-                <Field label="Fin du projet"><input type="date" className={inputCls} value={endDate} onChange={e => setEndDate(e.target.value)} /></Field>
-              </div>
-            </>
-          )}
+          {(!form.startDate || !form.endDate)
+            ? <div className="text-xs text-slate-400 mt-1.5">Renseignez une date de début et de fin ci-dessus pour activer cette option.</div>
+            : genGovernance && <div className="text-xs text-slate-400 mt-2">Préparation du changement, kick-off, démarrage, points de suivi, revue, clôture — créées comme tâches du projet, avec les dates ci-dessus.</div>}
         </div>
       )}
       <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
@@ -1543,7 +1570,7 @@ function MonthCalendar({ year, month, dayTasks, dayAppts, onPrev, onNext, openTa
                   const repeating = t.repeatUnit && t.repeatUnit !== 'aucune';
                   return (
                     <button key={t.id} onClick={() => openTask(t)} style={{ background: pr.bg, color: pr.color }} className="w-full text-left text-[10px] rounded px-1 py-0.5 truncate flex items-center gap-0.5">
-                      {repeating && <Repeat size={9} className="shrink-0" />}<span className="truncate">{t.title}</span>
+                      {repeating && <Repeat size={9} className="shrink-0" />}<span className="truncate">{t.time ? `${t.time} ` : ''}{t.title}</span>
                     </button>
                   );
                 })}
@@ -1557,19 +1584,13 @@ function MonthCalendar({ year, month, dayTasks, dayAppts, onPrev, onNext, openTa
   );
 }
 
-function PlanningView({ members, tasks, projects, appointments, perm, currentMemberId, openTask, openAppt, newAppt }) {
-  const visibleMembers = perm.isManager ? members
-    : perm.isReferent ? members.filter(m => m.id === currentMemberId || teamOfProjects(myProjectIds(currentMemberId, tasks, projects), tasks, projects).has(m.id))
-    : members.filter(m => m.id === currentMemberId);
-
-  const [selected, setSelected] = useState(currentMemberId || visibleMembers[0]?.id || '');
-  useEffect(() => { if (!selected) setSelected(currentMemberId || visibleMembers[0]?.id || ''); }, [members]);
+function PlanningView({ members, tasks, appointments, externalContacts, perm, currentMemberId, openTask, openAppt, newAppt }) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
-  const person = visibleMembers.find(m => m.id === selected);
+  const person = members.find(m => m.id === currentMemberId);
 
-  const mine = tasks.filter(t => isTaskOfMine(t, selected));
-  const myAppts = appointments.filter(a => a.participants.includes(selected));
-  const myOpenPool = tasks.filter(t => t.assignMode === 'pool' && !t.assigneeId && t.pool && t.pool.includes(selected));
+  const mine = tasks.filter(t => isTaskOfMine(t, currentMemberId));
+  const myAppts = appointments.filter(a => a.participants.includes(currentMemberId));
+  const myOpenPool = tasks.filter(t => t.assignMode === 'pool' && !t.assigneeId && t.pool && t.pool.includes(currentMemberId));
 
   // Planning = uniquement les tâches ponctuelles (un seul jour, comme un rendez-vous) : pas de startDate,
   // ou startDate identique à l'échéance. Les tâches qui s'étalent sur plusieurs jours restent dans Tâches/Gantt.
@@ -1583,34 +1604,37 @@ function PlanningView({ members, tasks, projects, appointments, perm, currentMem
   });
   const dayAppts = {}; myAppts.forEach(a => (dayAppts[a.date] = dayAppts[a.date] || []).push(a));
 
+  // Liste "Rendez-vous" : les vrais rendez-vous + les tâches de type Rendez-vous (envergure ≤2h) —
+  // cliquer ouvre directement la vraie tâche/le vrai rendez-vous, donc modifier l'un modifie l'autre.
+  const rdvTasks = punctualMine.filter(t => t.scope === 'eclair');
+  const rdvList = [
+    ...myAppts.map(a => ({ kind: 'appt', id: a.id, title: a.title, date: a.date, time: a.time, item: a })),
+    ...rdvTasks.map(t => ({ kind: 'task', id: t.id, title: t.title, date: t.deadline, time: t.time, item: t })),
+  ].sort((x, y) => (x.date + (x.time || '')).localeCompare(y.date + (y.time || '')));
+
   const handleExportIcs = () => {
     const events = [];
     punctualMine.forEach(t => {
-      projectOccurrences(t).forEach(date => events.push({ title: t.title, date, time: exportTime, location: '', notes: t.description }));
+      projectOccurrences(t).forEach(date => events.push({ title: t.title, date, time: t.time || exportTime, location: '', notes: t.description }));
     });
     myAppts.forEach(a => events.push({ title: a.title, date: a.date, time: a.time, location: a.location, notes: a.notes }));
     if (events.length === 0) return;
     downloadTextFile(`planning-${(person?.name || 'export').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.ics`, buildICSMulti(events), 'text/calendar');
   };
+  const handleDownloadOne = (row) => {
+    if (row.kind === 'appt') {
+      const a = row.item;
+      const invitees = [...members.filter(m => a.participants.includes(m.id)), ...(externalContacts || []).filter(c => (a.externalParticipants || []).includes(c.id))];
+      downloadTextFile(`${(a.title || 'rendez-vous').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.ics`, buildICS(a, invitees), 'text/calendar');
+    } else {
+      const t = row.item;
+      downloadTextFile(`${(t.title || 'rendez-vous').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.ics`, buildICSMulti([{ title: t.title, date: t.deadline, time: t.time || exportTime, location: '', notes: t.description }]), 'text/calendar');
+    }
+  };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-      <div className="bg-white rounded-2xl border border-slate-100 p-3 h-fit space-y-1">
-        {visibleMembers.map(m => (
-          <button key={m.id} onClick={() => setSelected(m.id)} className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left ${selected === m.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
-            <Avatar name={m.name} size={28} />
-            <div className="min-w-0"><div className={`text-xs font-medium truncate ${selected === m.id ? 'text-blue-700' : 'text-slate-600'}`}>{m.name}</div><div className="text-xs text-slate-400 truncate">{m.role}</div></div>
-          </button>
-        ))}
-        <div className="mt-2 pt-2 border-t border-slate-100">
-          <div className="text-[10px] text-slate-400 px-1 mb-1">Horaire pour les tâches d'un jour</div>
-          <input type="time" value={exportTime} onChange={e => setExportTime(e.target.value)} className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-600 mb-1.5" />
-          <button onClick={handleExportIcs} className="w-full text-xs font-medium text-slate-500 hover:text-blue-700 flex items-center justify-center gap-1.5 py-1.5">
-            <Download size={13} /> Exporter (.ics)
-          </button>
-        </div>
-      </div>
-      <div className="md:col-span-3 space-y-4">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="lg:col-span-2 space-y-4">
         {perm.canManageAppointments && (
           <div className="flex justify-end">
             <button onClick={newAppt} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Plus size={14} /> Nouveau rendez-vous</button>
@@ -1630,14 +1654,37 @@ function PlanningView({ members, tasks, projects, appointments, perm, currentMem
             </div>
           </div>
         )}
-        {!person ? <EmptyState icon={CalendarDays} title="Sélectionnez un collaborateur" /> : (
-          <MonthCalendar
-            year={cursor.year} month={cursor.month} dayTasks={dayTasks} dayAppts={dayAppts}
-            onPrev={() => setCursor(c => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 })}
-            onNext={() => setCursor(c => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 })}
-            openTask={openTask} openAppt={openAppt}
-          />
-        )}
+        <MonthCalendar
+          year={cursor.year} month={cursor.month} dayTasks={dayTasks} dayAppts={dayAppts}
+          onPrev={() => setCursor(c => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 })}
+          onNext={() => setCursor(c => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 })}
+          openTask={openTask} openAppt={openAppt}
+        />
+      </div>
+
+      <div className="space-y-3">
+        <div className="bg-white rounded-2xl border border-slate-100 p-3">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide px-1 mb-2">Rendez-vous</div>
+          <div className="divide-y divide-slate-50">
+            {rdvList.map(row => (
+              <div key={`${row.kind}-${row.id}`} className="flex items-center gap-2 py-2">
+                <button onClick={() => row.kind === 'appt' ? openAppt(row.item) : openTask(row.item)} className="flex-1 min-w-0 text-left hover:bg-slate-50 rounded-lg px-1 -mx-1 py-0.5">
+                  <div className="text-xs font-medium text-slate-700 truncate">{row.title}</div>
+                  <div className="text-xs text-slate-400">{fmtDate(row.date)}{row.time ? ` · ${row.time}` : ''}</div>
+                </button>
+                <button onClick={() => handleDownloadOne(row)} title="Télécharger (.ics)" className="text-slate-300 hover:text-blue-600 p-1 shrink-0"><Download size={13} /></button>
+              </div>
+            ))}
+            {rdvList.length === 0 && <div className="text-xs text-slate-400 py-4 text-center">Aucun rendez-vous</div>}
+          </div>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-100 p-3">
+          <div className="text-[10px] text-slate-400 mb-1">Horaire par défaut (tâches sans heure propre)</div>
+          <input type="time" value={exportTime} onChange={e => setExportTime(e.target.value)} className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-600 mb-1.5" />
+          <button onClick={handleExportIcs} className="w-full text-xs font-medium text-slate-500 hover:text-blue-700 flex items-center justify-center gap-1.5 py-1.5">
+            <Download size={13} /> Exporter tout le planning (.ics)
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1652,11 +1699,14 @@ function GanttView({ tasks, projects, members, openTask }) {
   const DAY_W = 30;
   const withRange = tasks.filter(t => t.deadline).filter(t => filterProject === 'all' || t.projectId === filterProject)
     .map(t => { let start = t.startDate || t.deadline; if (dayDiff(start, t.deadline) < 0) start = t.deadline; return { ...t, start }; });
+  const projectsWithSpan = projects.filter(p => (filterProject === 'all' || p.id === filterProject) && p.startDate && p.endDate);
 
-  if (withRange.length === 0) return <EmptyState icon={GanttChartSquare} title="Aucune tâche planifiable" subtitle="Renseignez une échéance sur vos tâches pour les voir apparaître ici." />;
+  if (withRange.length === 0 && projectsWithSpan.length === 0) return <EmptyState icon={GanttChartSquare} title="Aucune tâche planifiable" subtitle="Renseignez une échéance sur vos tâches, ou une durée de projet, pour les voir apparaître ici." />;
 
-  const rangeStart = addDays(withRange.reduce((min, t) => t.start < min ? t.start : min, withRange[0].start), -1);
-  const rangeEnd = addDays(withRange.reduce((max, t) => t.deadline > max ? t.deadline : max, withRange[0].deadline), 2);
+  const allStarts = [...withRange.map(t => t.start), ...projectsWithSpan.map(p => p.startDate)];
+  const allEnds = [...withRange.map(t => t.deadline), ...projectsWithSpan.map(p => p.endDate)];
+  const rangeStart = addDays(allStarts.reduce((min, d) => d < min ? d : min, allStarts[0]), -1);
+  const rangeEnd = addDays(allEnds.reduce((max, d) => d > max ? d : max, allEnds[0]), 2);
   const totalDays = dayDiff(rangeStart, rangeEnd) + 1;
   const days = Array.from({ length: totalDays }, (_, i) => addDays(rangeStart, i));
   const trackWidth = totalDays * DAY_W;
@@ -1666,7 +1716,8 @@ function GanttView({ tasks, projects, members, openTask }) {
     const last = months[months.length - 1];
     if (last && last.label === label) last.span += 1; else months.push({ label, span: 1 });
   });
-  const grouped = projects.map(p => ({ project: p, items: withRange.filter(t => t.projectId === p.id) })).filter(g => g.items.length > 0);
+  const grouped = projects.map(p => ({ project: p, items: withRange.filter(t => t.projectId === p.id) }))
+    .filter(g => g.items.length > 0 || (g.project.startDate && g.project.endDate));
   const noProject = withRange.filter(t => !projects.some(p => p.id === t.projectId));
   if (noProject.length) grouped.push({ project: { id: '_none', name: 'Sans projet', color: '#94A3B8' }, items: noProject });
   const todayOffset = dayDiff(rangeStart, todayISO());
@@ -1677,7 +1728,7 @@ function GanttView({ tasks, projects, members, openTask }) {
         <select className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 bg-white focus:outline-none" value={filterProject} onChange={e => setFilterProject(e.target.value)}>
           <option value="all">Tous les projets</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <span className="text-xs text-slate-400">Barres positionnées entre le début et l'échéance de chaque tâche — les étapes de conduite de projet apparaissent avec une icône</span>
+        <span className="text-xs text-slate-400">Zone grisée = avant le début de la tâche · bandeau teinté sous le nom du projet = sa durée globale</span>
       </div>
       <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
         <div style={{ minWidth: 200 + trackWidth }}>
@@ -1693,7 +1744,15 @@ function GanttView({ tasks, projects, members, openTask }) {
             <div key={g.project.id}>
               <div className="flex bg-slate-50/60">
                 <div className="w-[200px] shrink-0 px-3 py-1.5 text-xs font-semibold text-slate-500 flex items-center gap-1.5 border-r border-slate-100"><span style={{ background: g.project.color }} className="w-2 h-2 rounded-full" />{g.project.name}</div>
-                <div style={{ width: trackWidth }} className="border-b border-slate-50" />
+                <div style={{ width: trackWidth }} className="relative h-6 border-b border-slate-50">
+                  {g.project.startDate && g.project.endDate && (
+                    <div style={{
+                      left: dayDiff(rangeStart, g.project.startDate) * DAY_W,
+                      width: (dayDiff(g.project.startDate, g.project.endDate) + 1) * DAY_W,
+                      background: g.project.color,
+                    }} className="absolute top-1.5 h-3 rounded opacity-25" title={`Durée du projet : ${fmtDate(g.project.startDate)} → ${fmtDate(g.project.endDate)}`} />
+                  )}
+                </div>
               </div>
               {g.items.map(t => {
                 const responsibles = responsibleIdsOf(t).map(id => members.find(m => m.id === id)).filter(Boolean);
@@ -1707,6 +1766,7 @@ function GanttView({ tasks, projects, members, openTask }) {
                       <span className="text-xs text-slate-600 truncate">{t.title}</span>
                     </div>
                     <div style={{ width: trackWidth }} className="relative h-9">
+                      {offset > 0 && <div style={{ left: 0, width: offset * DAY_W }} className="absolute top-1.5 h-6 rounded-md bg-slate-100" title="Avant le début de la tâche" />}
                       {todayOffset >= 0 && todayOffset < totalDays && <div style={{ left: todayOffset * DAY_W + DAY_W / 2 }} className="absolute top-0 bottom-0 w-px bg-red-300 z-10" />}
                       <button onClick={() => openTask(t)} style={{ left: offset * DAY_W + 2, width: span * DAY_W - 4, background: t.isGovernance ? '#7C3AED' : pr.bar }}
                         className="absolute top-1.5 h-6 rounded-md text-white text-[10px] font-medium flex items-center px-2 truncate hover:brightness-95"
@@ -1896,11 +1956,21 @@ function ReferentApp({ session, onSignOut }) {
       const data = await loadAll();
       if (Object.values(data).some(r => r.error)) { setLoadError(true); setLoading(false); return; }
       let m = data.members.items, p = data.projects.items, t = data.tasks.items, a = data.appointments.items, ec = data.externalContacts.items, tr = data.taskRequests.items;
-      if (m.length === 0) { m = seedMembers(myEmail); await insertRows('members', m); }
-      if (p.length === 0) { p = seedProjects(m); await insertRows('projects', p); }
-      if (t.length === 0) { t = seedTasks(m, p); await insertRows('tasks', t); }
-      if (ec.length === 0) { ec = seedExternalContacts(); await insertRows('externalContacts', ec); }
-      if (a.length === 0) { a = seedAppointments(m, ec); await insertRows('appointments', a); }
+      // On n'amorce les données de démo qu'à la toute première utilisation (aucun collaborateur
+      // enregistré nulle part). Ensuite, même si un projet ou une tâche est vidé volontairement
+      // par l'utilisateur, on ne recrée plus jamais rien tout seul.
+      if (m.length === 0) {
+        m = seedMembers(myEmail);
+        p = seedProjects(m);
+        t = seedTasks(m, p);
+        ec = seedExternalContacts();
+        a = seedAppointments(m, ec);
+        await insertRows('members', m);
+        await insertRows('projects', p);
+        await insertRows('tasks', t);
+        await insertRows('externalContacts', ec);
+        await insertRows('appointments', a);
+      }
       setMembers(m); setProjects(p); setTasks(t); setAppointments(a); setExternalContacts(ec); setTaskRequests(tr);
       const matched = m.find(x => (x.email || '').toLowerCase() === myEmail);
       if (matched) {
@@ -1915,37 +1985,41 @@ function ReferentApp({ session, onSignOut }) {
   const perm = permissionsFor(currentMember?.accessLevel || 'utilisateur');
   const nav = navFor(perm);
 
-  const saveTask = (t) => {
+  const saveTask = async (t) => {
     const existing = tasks.find(x => x.id === t.id);
     const justCompleted = existing && existing.status !== 'termine' && t.status === 'termine';
     setTasks(prev => existing ? prev.map(x => x.id === t.id ? t : x) : [...prev, t]);
-    upsertRow('tasks', t);
+    warnIfFailed(await upsertRow('tasks', t), 'La tâche');
     if (justCompleted && t.repeatUnit && t.repeatUnit !== 'aucune') {
       const clone = { ...t, id: uid(), status: 'a_faire', createdAt: todayISO(),
         startDate: shiftByRepeat(t.startDate, t.repeatUnit, t.repeatEvery), deadline: shiftByRepeat(t.deadline, t.repeatUnit, t.repeatEvery) };
       setTasks(prev => [...prev, clone]);
-      upsertRow('tasks', clone);
+      warnIfFailed(await upsertRow('tasks', clone), 'La prochaine occurrence');
     }
     setTaskModal(null);
   };
-  const deleteTask = (id) => { setTasks(prev => prev.filter(x => x.id !== id)); deleteRow('tasks', id); setTaskModal(null); };
-  const claimTask = (taskId) => {
+  const deleteTask = async (id) => {
+    setTasks(prev => prev.filter(x => x.id !== id));
+    warnIfFailed(await deleteRow('tasks', id), 'La suppression de la tâche');
+    setTaskModal(null);
+  };
+  const claimTask = async (taskId) => {
     const updated = { ...tasks.find(t => t.id === taskId), assigneeId: connectedAs };
     if (updated.status === 'a_faire') updated.status = 'en_cours';
     setTasks(prev => prev.map(t => t.id === taskId ? updated : t));
-    upsertRow('tasks', updated);
+    warnIfFailed(await upsertRow('tasks', updated), 'La prise de la tâche');
     setTaskModal(null);
   };
-  const duplicateTask = (original) => {
+  const duplicateTask = async (original) => {
     const clone = { ...original, id: uid(), title: `${original.title} (copie)`, status: 'a_faire', createdAt: todayISO() };
     setTasks(prev => [...prev, clone]);
-    upsertRow('tasks', clone);
+    warnIfFailed(await upsertRow('tasks', clone), 'La copie de la tâche');
     setTaskModal({ task: clone });
   };
-  const updateRaci = (taskId, raci) => {
+  const updateRaci = async (taskId, raci) => {
     const updated = { ...tasks.find(t => t.id === taskId), raci };
     setTasks(prev => prev.map(t => t.id === taskId ? updated : t));
-    upsertRow('tasks', updated);
+    warnIfFailed(await upsertRow('tasks', updated), 'Le rôle du participant');
   };
 
   const importMembers = (newMembers) => {
@@ -2163,7 +2237,7 @@ function ReferentApp({ session, onSignOut }) {
         <div className="flex-1 overflow-y-auto p-6">
           {view === 'dashboard' && <Dashboard tasks={tasks} members={members} appointments={appointments} connectedAs={connectedAs} openTask={(t) => setTaskModal({ task: t })} onClaim={claimTask} />}
           {view === 'tasks' && <TasksView tasks={tasks} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={() => setTaskModal({ task: null })} newProject={() => setProjectModal({ project: null })} editProject={(p) => setProjectModal({ project: p })} />}
-          {view === 'planning' && <PlanningView members={members} tasks={tasks} projects={projects} appointments={appointments} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
+          {view === 'planning' && <PlanningView members={members} tasks={tasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
           {view === 'gantt' && <GanttView tasks={tasks} members={members}
             projects={perm.isManager ? projects : projects.filter(p => myProjectIds(connectedAs, tasks, projects).has(p.id))}
             openTask={(t) => setTaskModal({ task: t })} />}

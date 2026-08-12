@@ -63,11 +63,19 @@ aussi par défaut, sans réglage supplémentaire.
 2. Entrez l'email de chaque collaborateur (à commencer par le vôtre).
 3. Chacun recevra un email avec un lien pour activer son compte et choisir son mot de passe.
 
-> Astuce : invitez d'abord **votre propre email** — la première fois que vous
-> vous connectez, l'application vous crée automatiquement comme "Manager".
-> Vous pourrez ensuite renommer votre fiche et ajouter vos collègues
-> directement dans l'appli (onglet "Équipe & référents"), avec leur email,
-> **qui doit être exactement le même** que celui invité ici.
+> Astuce : invitez d'abord **votre propre email**. Après activation, la
+> première connexion affichera "Compte non reconnu" tant que votre fiche
+> n'existe pas encore dans la table `members` — c'est normal, l'app ne crée
+> plus personne automatiquement (voir "Limites connues" plus bas). Créez-vous
+> manuellement en une fois via **SQL Editor** :
+> ```sql
+> insert into members (id, name, role, email, access_level)
+> values ('vous', 'Vous (à renommer)', 'Manager', 'votre-email@exemple.fr', 'manager');
+> ```
+> Rechargez ensuite l'app : vous êtes reconnu comme Manager, et pouvez
+> ajouter vos collègues directement dans l'appli (onglet "Équipe &
+> référents"), avec leur email, **qui doit être exactement le même** que
+> celui invité ici.
 
 ## 5. Récupérer les clés de connexion
 
@@ -182,3 +190,13 @@ npm run dev
   qui modifient deux éléments différents en même temps ne s'écrasent plus.
   Il reste un cas limite non géré : si deux personnes modifient *exactement
   la même* tâche au même instant, la dernière sauvegarde l'emporte sur l'autre.
+- **Plus de réamorçage automatique des données de démo** : les toutes
+  premières versions de l'app recréaient un jeu de données factice
+  (collaborateurs "Thomas Lenoir", "Camille Roussel"..., projets "Départ Dr.
+  Mercier"...) dès que la lecture de la table `members` semblait vide au
+  chargement — y compris parfois à tort (aléas réseau/RLS), ce qui faisait
+  réapparaître des doublons de personnes/projets/tâches de démo au fil du
+  temps. Ce comportement a été supprimé : l'app n'insère plus jamais rien
+  automatiquement, seul un ajout explicite (par vous, dans l'app ou via SQL)
+  crée des données. Voir l'astuce de la section 4 pour créer le tout premier
+  compte Manager manuellement.

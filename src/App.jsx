@@ -238,60 +238,6 @@ function buildGovernanceTasks(start, end, projectId, creatorId) {
   ];
 }
 
-/* ---------------------------------------------------------------------- */
-/*  Données de démonstration                                             */
-/* ---------------------------------------------------------------------- */
-
-const seedMembers = (managerEmail) => ([
-  { id: uid(), name: 'Vous (à renommer)', role: "Responsable d'exploitation", email: managerEmail || 'vous@cabinet.fr', accessLevel: 'manager', external: false },
-  { id: uid(), name: 'Thomas Lenoir', role: 'Manipulateur radio référent', email: 'thomas.lenoir@cabinet-radio.fr', accessLevel: 'referent', external: false },
-  { id: uid(), name: 'Camille Roussel', role: 'Secrétaire médicale', email: 'camille.roussel@cabinet-radio.fr', accessLevel: 'utilisateur', external: false },
-  { id: uid(), name: 'Yasmine Belkacem', role: 'Secrétaire médicale', email: 'yasmine.belkacem@cabinet-radio.fr', accessLevel: 'utilisateur', external: false },
-]);
-
-const seedProjects = (members) => {
-  const byName = (n) => members.find(m => m.name === n)?.id;
-  return [
-    { id: uid(), name: 'Départ Dr. Mercier', color: '#2563EB', description: "Organisation du pot de départ et des courriers associés", teamIds: [byName('Camille Roussel')].filter(Boolean) },
-    { id: uid(), name: 'Fonctionnement courant', color: '#64748B', description: 'Tâches récurrentes du cabinet', teamIds: members.map(m => m.id) },
-    { id: uid(), name: 'Digitalisation parcours patient', color: '#7C3AED', description: 'Projet structurant pluriannuel : bornes, pré-admission, ticketing', teamIds: members.map(m => m.id) },
-  ];
-};
-
-const seedTasks = (members, projects) => {
-  const byName = (n) => members.find(m => m.name === n)?.id;
-  const p0 = projects[0]?.id, p1 = projects[1]?.id, p2 = projects[2]?.id;
-  const plus = (n) => addDays(todayISO(), n);
-  const manager = byName('Vous (à renommer)');
-  const tasks = [
-    { id: uid(), title: "Rédiger les courriers d'invitation", description: 'Invitation au pot de départ, à envoyer aux confrères et partenaires.', projectId: p0, assignMode: 'individuel', assigneeId: byName('Camille Roussel'), pool: [], raci: {}, priority: 'haute', importance: 'moyenne', scope: 'eclair', status: 'en_cours', startDate: plus(-1), deadline: plus(2), createdAt: todayISO(), repeatUnit: 'aucune', repeatEvery: 1 },
-    { id: uid(), title: 'Relancer les impayés tiers payant', description: 'Liste des dossiers en attente depuis plus de 30 jours.', projectId: p1, assignMode: 'individuel', assigneeId: byName('Yasmine Belkacem'), pool: [], raci: {}, priority: 'normale', importance: 'moyenne', scope: 'courte', status: 'a_faire', startDate: plus(1), deadline: plus(5), createdAt: todayISO(), repeatUnit: 'aucune', repeatEvery: 1 },
-    { id: uid(), title: 'Vérifier planning vacations du mois', description: '', projectId: p1, assignMode: 'individuel', assigneeId: byName('Thomas Lenoir'), pool: [], raci: {}, priority: 'urgente', importance: 'faible', scope: 'eclair', status: 'a_faire', startDate: plus(-3), deadline: plus(-1), createdAt: todayISO(), repeatUnit: 'aucune', repeatEvery: 1 },
-    { id: uid(), title: 'Préparer reporting KPI mensuel', description: '', projectId: p1, assignMode: 'individuel', assigneeId: manager, pool: [], raci: {}, priority: 'normale', importance: 'elevee', scope: 'courte', status: 'a_faire', startDate: plus(2), deadline: plus(6), createdAt: todayISO(), repeatUnit: 'aucune', repeatEvery: 1 },
-    { id: uid(), title: 'Assurer la permanence accueil du midi', description: "Ouverte à toute personne disponible — prise par la première personne qui se rend disponible.", projectId: p1, assignMode: 'pool', assigneeId: '', pool: [byName('Camille Roussel'), byName('Yasmine Belkacem')].filter(Boolean), raci: {}, priority: 'haute', importance: 'moyenne', scope: 'eclair', status: 'a_faire', startDate: plus(0), deadline: plus(0), createdAt: todayISO(), repeatUnit: 'aucune', repeatEvery: 1 },
-    { id: uid(), title: 'Contrôle de sécurité radioprotection', description: 'Vérification hebdomadaire des dosimètres et des équipements de protection.', projectId: p1, assignMode: 'individuel', assigneeId: byName('Thomas Lenoir'), pool: [], raci: {}, priority: 'haute', importance: 'elevee', scope: 'eclair', status: 'a_faire', startDate: plus(3), deadline: plus(3), createdAt: todayISO(), repeatUnit: 'semaine', repeatEvery: 1 },
-    { id: uid(), title: "Cadrage des bornes d'accueil patients", description: 'Choix du prestataire, périmètre fonctionnel.', projectId: p2, assignMode: 'equipe', assigneeId: '', pool: [],
-      raci: { [manager]: 'A', [byName('Thomas Lenoir')]: 'R', [byName('Camille Roussel')]: 'C' },
-      priority: 'normale', importance: 'critique', scope: 'longue', status: 'en_cours', startDate: plus(-10), deadline: plus(20), createdAt: todayISO(), repeatUnit: 'aucune', repeatEvery: 1 },
-  ];
-  return [...tasks, ...buildGovernanceTasks(plus(-10), plus(150), p2, manager)];
-};
-
-const seedExternalContacts = () => ([
-  { id: uid(), name: 'Dr. Vasseur', organization: 'Cabinet partenaire', role: 'Radiologue confrère', email: 'dr.vasseur@partenaire-imagerie.fr' },
-  { id: uid(), name: 'Marc Ancelin', organization: 'Prestataire maintenance IRM', role: 'Référent technique', email: 'm.ancelin@maintenance-imagerie.fr' },
-]);
-
-const seedAppointments = (members, contacts) => {
-  const byName = (n) => members.find(m => m.name === n)?.id;
-  const plus = (n) => addDays(todayISO(), n);
-  return [
-    { id: uid(), title: 'Point hebdo équipe secrétariat', date: plus(1), time: '09:00', location: 'Salle de réunion', participants: [byName('Vous (à renommer)'), byName('Camille Roussel'), byName('Yasmine Belkacem')].filter(Boolean), externalParticipants: [], notes: '' },
-    { id: uid(), title: 'RDV fournisseur maintenance IRM', date: plus(4), time: '14:30', location: 'Sur site', participants: [byName('Thomas Lenoir'), byName('Vous (à renommer)')].filter(Boolean), externalParticipants: [contacts[1]?.id].filter(Boolean), notes: 'Prévoir le carnet de maintenance.' },
-  ];
-};
-
-const seedTaskRequests = () => ([]);
 
 /* ---------------------------------------------------------------------- */
 /*  Stockage — une vraie table par type d'objet (CRUD ligne à ligne)      */
@@ -2035,22 +1981,7 @@ function ReferentApp({ session, onSignOut }) {
     (async () => {
       const data = await loadAll();
       if (Object.values(data).some(r => r.error)) { setLoadError(true); setLoading(false); return; }
-      let m = data.members.items, p = data.projects.items, t = data.tasks.items, a = data.appointments.items, ec = data.externalContacts.items, tr = data.taskRequests.items;
-      // On n'amorce les données de démo qu'à la toute première utilisation (aucun collaborateur
-      // enregistré nulle part). Ensuite, même si un projet ou une tâche est vidé volontairement
-      // par l'utilisateur, on ne recrée plus jamais rien tout seul.
-      if (m.length === 0) {
-        m = seedMembers(myEmail);
-        p = seedProjects(m);
-        t = seedTasks(m, p);
-        ec = seedExternalContacts();
-        a = seedAppointments(m, ec);
-        await insertRows('members', m);
-        await insertRows('projects', p);
-        await insertRows('tasks', t);
-        await insertRows('externalContacts', ec);
-        await insertRows('appointments', a);
-      }
+      const m = data.members.items, p = data.projects.items, t = data.tasks.items, a = data.appointments.items, ec = data.externalContacts.items, tr = data.taskRequests.items;
       setMembers(m); setProjects(p); setTasks(t); setAppointments(a); setExternalContacts(ec); setTaskRequests(tr);
       const matched = m.find(x => (x.email || '').toLowerCase() === myEmail);
       if (matched) {
@@ -2205,9 +2136,9 @@ function ReferentApp({ session, onSignOut }) {
     if (newEmail && newEmail.toLowerCase() !== hadEmail.toLowerCase()) inviteMemberByEmail(newEmail);
     setMemberModal(null);
   };
-  const deleteMember = (id) => {
+  const deleteMember = async (id) => {
     setMembers(prev => prev.filter(x => x.id !== id));
-    deleteRow('members', id);
+    warnIfFailed(await deleteRow('members', id), 'La suppression du collaborateur');
 
     const affectedTasks = tasks.filter(t => t.assigneeId === id || (t.pool || []).includes(id) || (t.raci && t.raci[id]));
     if (affectedTasks.length) {
@@ -2248,14 +2179,15 @@ function ReferentApp({ session, onSignOut }) {
     else notifyNewProjectTeam(projectObj);
     setProjectModal(null);
   };
-  const deleteProject = (id) => {
+  const deleteProject = async (id) => {
     setProjects(prev => prev.filter(p => p.id !== id));
-    deleteRow('projects', id);
+    warnIfFailed(await deleteRow('projects', id), 'La suppression du projet');
     const affectedTasks = tasks.filter(t => t.projectId === id);
     if (affectedTasks.length) {
       const affectedIds = new Set(affectedTasks.map(t => t.id));
       setTasks(prev => prev.filter(t => !affectedIds.has(t.id)));
-      affectedTasks.forEach(t => deleteRow('tasks', t.id));
+      const results = await Promise.all(affectedTasks.map(t => deleteRow('tasks', t.id)));
+      warnIfFailed(results.every(Boolean), 'La suppression des tâches du projet');
     }
     setProjectModal(null);
   };
@@ -2266,7 +2198,11 @@ function ReferentApp({ session, onSignOut }) {
     upsertRow('appointments', a);
     setApptModal(null);
   };
-  const deleteAppt = (id) => { setAppointments(prev => prev.filter(x => x.id !== id)); deleteRow('appointments', id); setApptModal(null); };
+  const deleteAppt = async (id) => {
+    setAppointments(prev => prev.filter(x => x.id !== id));
+    warnIfFailed(await deleteRow('appointments', id), 'La suppression du rendez-vous');
+    setApptModal(null);
+  };
 
   const saveContact = (c) => {
     const exists = externalContacts.some(x => x.id === c.id);
@@ -2274,9 +2210,9 @@ function ReferentApp({ session, onSignOut }) {
     upsertRow('externalContacts', c);
     setContactModal(null);
   };
-  const deleteContact = (id) => {
+  const deleteContact = async (id) => {
     setExternalContacts(prev => prev.filter(x => x.id !== id));
-    deleteRow('externalContacts', id);
+    warnIfFailed(await deleteRow('externalContacts', id), 'La suppression du contact');
     const affectedAppts = appointments.filter(a => (a.externalParticipants || []).includes(id));
     if (affectedAppts.length) {
       const updated = affectedAppts.map(a => ({ ...a, externalParticipants: (a.externalParticipants || []).filter(p => p !== id) }));

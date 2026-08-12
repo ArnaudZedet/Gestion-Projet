@@ -106,6 +106,53 @@ aussi par défaut, sans réglage supplémentaire.
    (avec le même email que celui que vous inviterez à l'étape 4 pour chacun d'eux).
 4. Invitez-les (étape 4), donnez-leur l'URL Vercel.
 
+## 9. Invitations et notifications par email (optionnel mais recommandé)
+
+Deux fonctionnalités serveur ont été ajoutées :
+
+- **Invitation automatique** : dès qu'un manager saisit ou modifie l'email
+  d'un collaborateur dans l'onglet "Équipe & référents", l'invitation
+  Supabase (email + choix du mot de passe) part automatiquement — plus
+  besoin de la refaire à la main dans le dashboard Supabase.
+- **Notifications par email** : un collaborateur reçoit un email quand il
+  est affecté/retiré d'un projet, quand les dates ou le statut d'un projet
+  changent, ou quand une tâche lui est assignée.
+
+Ces deux fonctions vivent dans le dossier `api/` (fonctions serveur Vercel)
+et ont besoin de secrets qui ne doivent **jamais** être mis dans le code ni
+préfixés par `VITE_` (sinon ils seraient visibles par tout le monde dans le
+navigateur). À ajouter dans **Vercel → Project Settings → Environment
+Variables** :
+
+1. **`SUPABASE_SERVICE_ROLE_KEY`** — Menu Supabase **Project Settings → API**,
+   copiez la clé **`service_role`** (différente de la clé `anon` utilisée
+   par ailleurs). Cette clé donne un accès total à la base : ne la partagez
+   jamais, ne la mettez jamais côté client.
+2. **`RESEND_API_KEY`** — créez un compte gratuit sur https://resend.com,
+   **API Keys → Create API Key**.
+3. **`RESEND_FROM`** — l'adresse d'expédition, ex.
+   `Gestion des tâches <notifications@votre-domaine.fr>`. Pour envoyer à
+   toute l'équipe (pas seulement à vous-même en mode test), vérifiez un nom
+   de domaine dans Resend (**Domains → Add Domain**, ajout de quelques
+   enregistrements DNS chez votre registrar) — sinon Resend n'autorise
+   l'envoi qu'à l'adresse email de votre propre compte Resend.
+4. **`SITE_URL`** — l'URL Vercel de l'application (ex.
+   `https://referent-app-xxxx.vercel.app`), utilisée dans le lien
+   d'activation de l'email d'invitation.
+
+Après ajout des variables, redéployez (Vercel le fait automatiquement au
+prochain push, ou **Deployments → ⋯ → Redeploy**).
+
+> Ces deux fonctionnalités ne peuvent pas être testées avec `npm run dev`
+> (Vite ne sait pas exécuter le dossier `api/`) — il faut soit tester
+> directement sur Vercel, soit utiliser `npx vercel dev` en local avec les
+> variables d'environnement ci-dessus renseignées dans `.env`.
+
+Si ces secrets ne sont pas configurés, le reste de l'application continue
+de fonctionner normalement — seules l'invitation auto et les notifications
+échouent silencieusement (ou avec une alerte pour l'invitation, qui vous
+invite alors à inviter la personne manuellement depuis Supabase).
+
 ## Tester en local avant de déployer (optionnel)
 
 ```bash

@@ -2065,11 +2065,92 @@ function ReferentApp({ session, onSignOut }) {
   const perm = permissionsFor(currentMember?.accessLevel || 'utilisateur');
   const nav = navFor(perm);
 
+  // Invitation Supabase (email + mot de passe) déclenchée dès qu'un manager
+  // saisit/modifie l'email d'un collaborateur — plus besoin de le refaire à
+  // la main dans le dashboard Supabase.
+  const inviteMemberByEmail = async (email) => {
+    try {
+      const res = await fetch('/api/invite-member', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        window.alert(`⚠️ L'invitation par email n'a pas pu être envoyée à ${email} (${data.error || 'erreur inconnue'}). Vous pouvez inviter la personne manuellement depuis Supabase (Authentication → Users → Invite user).`);
+      }
+    } catch {
+      window.alert(`⚠️ L'invitation par email n'a pas pu être envoyée à ${email} (problème de connexion). Vous pouvez inviter la personne manuellement depuis Supabase.`);
+    }
+  };
+
+  // Notifications applicatives (affectation à un projet, projet mis à jour,
+  // tâche assignée...) — best-effort, ne bloque jamais la sauvegarde.
+  const notifyByEmail = (to, subject, html) => {
+    const recipients = (to || []).filter(Boolean);
+    if (!recipients.length) return;
+    fetch('/api/send-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ to: recipients, subject, html }),
+    }).catch((e) => console.error('Notification email non envoyée', e));
+  };
+
+  const PROJECT_STATUS_LABELS = { en_cours: 'En cours', termine: 'Terminé' };
+
+  const notifyNewProjectTeam = (project) => {
+    (project.teamIds || []).filter(id => id !== connectedAs).forEach(id => {
+      const m = members.find(x => x.id === id);
+      if (m?.email) notifyByEmail([m.email], `Vous avez été affecté(e) au projet « ${project.name} »`,
+        `<p>Bonjour ${m.name},</p><p>Vous avez été affecté(e) au projet <strong>${project.name}</strong>.</p>${project.description ? `<p>${project.description}</p>` : ''}`);
+    });
+  };
+
+  const notifyProjectChanges = (prev, next) => {
+    const prevTeam = prev.teamIds || [];
+    const nextTeam = next.teamIds || [];
+    const added = nextTeam.filter(id => !prevTeam.includes(id) && id !== connectedAs);
+    const removed = prevTeam.filter(id => !nextTeam.includes(id) && id !== connectedAs);
+    added.forEach(id => {
+      const m = members.find(x => x.id === id);
+      if (m?.email) notifyByEmail([m.email], `Vous avez été affecté(e) au projet « ${next.name} »`,
+        `<p>Bonjour ${m.name},</p><p>Vous avez été affecté(e) au projet <strong>${next.name}</strong>.</p>${next.description ? `<p>${next.description}</p>` : ''}`);
+    });
+    removed.forEach(id => {
+      const m = members.find(x => x.id === id);
+      if (m?.email) notifyByEmail([m.email], `Vous avez été retiré(e) du projet « ${next.name} »`,
+        `<p>Bonjour ${m.name},</p><p>Vous n'êtes plus affecté(e) au projet <strong>${next.name}</strong>.</p>`);
+    });
+
+    const changes = [];
+    if (prev.status !== next.status) changes.push(`Statut : ${PROJECT_STATUS_LABELS[prev.status] || prev.status || '—'} → ${PROJECT_STATUS_LABELS[next.status] || next.status || '—'}`);
+    if (prev.startDate !== next.startDate) changes.push(`Date de début : ${fmtDateLong(prev.startDate)} → ${fmtDateLong(next.startDate)}`);
+    if (prev.endDate !== next.endDate) changes.push(`Date de fin : ${fmtDateLong(prev.endDate)} → ${fmtDateLong(next.endDate)}`);
+    if (changes.length) {
+      const recipients = nextTeam.filter(id => id !== connectedAs).map(id => members.find(m => m.id === id)?.email).filter(Boolean);
+      notifyByEmail(recipients, `Le projet « ${next.name} » a évolué`,
+        `<p>Le projet <strong>${next.name}</strong> a été mis à jour :</p><ul>${changes.map(c => `<li>${c}</li>`).join('')}</ul>`);
+    }
+  };
+
+  const notifyTaskAssignment = (existing, t) => {
+    const project = projects.find(p => p.id === t.projectId);
+    const prevAssignees = new Set([existing?.assigneeId, ...(existing?.pool || [])].filter(Boolean));
+    const nextAssignees = new Set([t.assigneeId, ...(t.pool || [])].filter(Boolean));
+    const newlyAssigned = [...nextAssignees].filter(id => !prevAssignees.has(id) && id !== connectedAs);
+    newlyAssigned.forEach(id => {
+      const m = members.find(x => x.id === id);
+      if (m?.email) notifyByEmail([m.email], `Nouvelle tâche assignée : ${t.title}`,
+        `<p>Bonjour ${m.name},</p><p>La tâche <strong>${t.title}</strong>${project ? ` (projet ${project.name})` : ''} vous a été assignée.</p>${t.deadline ? `<p>Échéance : ${fmtDateLong(t.deadline)}</p>` : ''}`);
+    });
+  };
+
   const saveTask = async (t) => {
     const existing = tasks.find(x => x.id === t.id);
     const justCompleted = existing && existing.status !== 'termine' && t.status === 'termine';
     setTasks(prev => existing ? prev.map(x => x.id === t.id ? t : x) : [...prev, t]);
     warnIfFailed(await upsertRow('tasks', t), 'La tâche');
+    notifyTaskAssignment(existing, t);
     if (justCompleted && t.repeatUnit && t.repeatUnit !== 'aucune') {
       let nextStart = shiftByRepeat(t.startDate, t.repeatUnit, t.repeatEvery);
       let nextDeadline = shiftByRepeat(t.deadline, t.repeatUnit, t.repeatEvery);
@@ -2115,9 +2196,13 @@ function ReferentApp({ session, onSignOut }) {
   };
 
   const saveMember = (m) => {
-    const exists = members.some(x => x.id === m.id);
+    const prevMember = members.find(x => x.id === m.id);
+    const exists = !!prevMember;
     setMembers(prev => exists ? prev.map(x => x.id === m.id ? m : x) : [...prev, m]);
     upsertRow('members', m);
+    const newEmail = (m.email || '').trim();
+    const hadEmail = (prevMember?.email || '').trim();
+    if (newEmail && newEmail.toLowerCase() !== hadEmail.toLowerCase()) inviteMemberByEmail(newEmail);
     setMemberModal(null);
   };
   const deleteMember = (id) => {
@@ -2151,13 +2236,16 @@ function ReferentApp({ session, onSignOut }) {
   };
 
   const saveProject = (projectObj, governanceTasks) => {
-    const exists = projects.some(p => p.id === projectObj.id);
+    const prevProject = projects.find(p => p.id === projectObj.id);
+    const exists = !!prevProject;
     setProjects(prev => exists ? prev.map(p => p.id === projectObj.id ? projectObj : p) : [...prev, projectObj]);
     upsertRow('projects', projectObj);
     if (governanceTasks && governanceTasks.length) {
       setTasks(prev => [...prev, ...governanceTasks]);
       insertRows('tasks', governanceTasks);
     }
+    if (exists) notifyProjectChanges(prevProject, projectObj);
+    else notifyNewProjectTeam(projectObj);
     setProjectModal(null);
   };
   const deleteProject = (id) => {

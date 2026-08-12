@@ -1995,6 +1995,7 @@ function ReferentApp({ session, onSignOut }) {
   const [contactModal, setContactModal] = useState(null);
   const [requestModal, setRequestModal] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [hoveredNav, setHoveredNav] = useState('');
 
   const myEmail = (session?.user?.email || '').toLowerCase();
 
@@ -2313,33 +2314,42 @@ function ReferentApp({ session, onSignOut }) {
   return (
     <div className="flex min-h-screen bg-[#F7F8FA] overflow-hidden" style={{ fontFamily: 'Inter, sans-serif' }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');`}</style>
-      <div className="w-56 shrink-0 flex flex-col bg-white border-r border-slate-100">
+      <div className="w-56 shrink-0 flex flex-col border-r border-blue-100" style={{ background: '#EAF2FE' }}>
         <div className="px-5 py-5 flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm text-white shadow-sm" style={{ fontFamily: 'Space Grotesk, sans-serif', background: 'linear-gradient(135deg, #2563EB, #4F46E5)' }}>R</div>
           <span className="font-semibold tracking-tight text-slate-800" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Mes projets</span>
         </div>
-        <nav className="flex-1 px-2.5 space-y-1 overflow-y-auto">
-          {nav.map(n => (
-            <button key={n.id} onClick={() => setView(n.id)}
-              style={{ background: view === n.id ? n.accent : 'transparent' }}
-              className={`w-full flex items-center gap-2.5 pl-3 pr-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${view === n.id ? 'text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}>
-              <n.Icon size={16} style={{ color: view === n.id ? '#FFFFFF' : n.accent }} /> {n.label}
-            </button>
-          ))}
+        <nav className="flex-1 px-2.5 space-y-1.5 overflow-y-auto">
+          {nav.map(n => {
+            const active = view === n.id;
+            const hovered = hoveredNav === n.id;
+            return (
+              <button key={n.id} onClick={() => setView(n.id)}
+                onMouseEnter={() => setHoveredNav(n.id)} onMouseLeave={() => setHoveredNav('')}
+                style={{
+                  background: active ? n.accent : (hovered ? `${n.accent}2E` : `${n.accent}14`),
+                  border: `1.5px solid ${active ? n.accent : (hovered ? n.accent : `${n.accent}66`)}`,
+                  boxShadow: hovered && !active ? `0 0 0 3px ${n.accent}26` : 'none',
+                }}
+                className={`w-full flex items-center gap-2.5 pl-3 pr-3 py-2.5 rounded-xl text-sm font-medium transition-all ${active ? 'text-white shadow-sm' : 'text-slate-600'}`}>
+                <n.Icon size={16} style={{ color: active ? '#FFFFFF' : n.accent }} /> {n.label}
+              </button>
+            );
+          })}
         </nav>
-        <div className="px-3 py-3 border-t border-slate-100">
+        <div className="px-3 py-3 border-t border-blue-100/70">
           <div className="flex items-center gap-2 px-2 mb-2">
             {currentMember && <Avatar name={currentMember.name} size={26} />}
             <div className="min-w-0 flex-1"><div className="text-xs font-medium text-slate-700 truncate">{currentMember?.name}</div><div className="text-[10px] text-slate-400 truncate">{myEmail}</div></div>
           </div>
-          <button onClick={onSignOut} className="w-full text-xs text-slate-500 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-lg px-2.5 py-2 flex items-center justify-center gap-1.5"><Lock size={12} /> Se déconnecter</button>
+          <button onClick={onSignOut} className="w-full text-xs text-slate-500 hover:text-slate-700 bg-white/70 hover:bg-white rounded-lg px-2.5 py-2 flex items-center justify-center gap-1.5"><Lock size={12} /> Se déconnecter</button>
         </div>
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white relative">
-          <div className="absolute top-0 left-0 right-0 h-1" style={{ background: `linear-gradient(90deg, ${nav.find(n => n.id === view)?.accent || '#818CF8'}, transparent)` }} />
-          <h2 className="font-semibold text-slate-800 text-lg" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>{nav.find(n => n.id === view)?.label}</h2>
+          <div className="absolute top-0 left-0 right-0 h-1.5" style={{ background: `linear-gradient(90deg, ${nav.find(n => n.id === view)?.accent || '#818CF8'}, ${nav.find(n => n.id === view)?.accent || '#818CF8'}55, transparent)` }} />
+          <h2 className="font-semibold text-lg flex items-center gap-2" style={{ fontFamily: 'Space Grotesk, sans-serif', color: nav.find(n => n.id === view)?.accent || '#1E293B' }}>{nav.find(n => n.id === view)?.label}</h2>
           <div className="relative">
             <button onClick={() => setNotifOpen(o => !o)} className="relative p-2 rounded-lg hover:bg-slate-50 text-slate-500">
               <Bell size={18} />

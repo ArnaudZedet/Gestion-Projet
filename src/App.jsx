@@ -2276,9 +2276,9 @@ function ReferentApp({ session, onSignOut }) {
         <nav className="flex-1 px-2.5 space-y-0.5 overflow-y-auto">
           {nav.map(n => (
             <button key={n.id} onClick={() => setView(n.id)}
-              style={view === n.id ? { background: `${n.accent}26`, borderLeft: `3px solid ${n.accent}`, color: '#fff' } : { borderLeft: '3px solid transparent' }}
-              className={`w-full flex items-center gap-2.5 pl-2.5 pr-3 py-2.5 rounded-r-xl text-sm transition-colors ${view === n.id ? '' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}>
-              <n.Icon size={16} style={view === n.id ? { color: n.accent } : undefined} /> {n.label}
+              style={{ background: view === n.id ? `${n.accent}40` : `${n.accent}1A`, borderLeft: `3px solid ${n.accent}` }}
+              className={`w-full flex items-center gap-2.5 pl-2.5 pr-3 py-2.5 rounded-r-xl text-sm transition-colors ${view === n.id ? 'text-white' : 'text-slate-200 hover:text-white'}`}>
+              <n.Icon size={16} style={{ color: n.accent }} /> {n.label}
             </button>
           ))}
         </nav>

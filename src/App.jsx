@@ -2313,27 +2313,26 @@ function ReferentApp({ session, onSignOut }) {
   return (
     <div className="flex min-h-screen bg-[#F7F8FA] overflow-hidden" style={{ fontFamily: 'Inter, sans-serif' }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');`}</style>
-      <div className="w-56 shrink-0 text-white flex flex-col" style={{ background: 'linear-gradient(165deg, #4338CA 0%, #6D28D9 48%, #C026D3 100%)' }}>
+      <div className="w-56 shrink-0 flex flex-col bg-white border-r border-slate-100">
         <div className="px-5 py-5 flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm shadow-md" style={{ fontFamily: 'Space Grotesk, sans-serif', background: 'linear-gradient(135deg, #FBBF24, #FB7185)' }}>R</div>
-          <span className="font-semibold tracking-tight" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Mes projets</span>
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm text-white shadow-sm" style={{ fontFamily: 'Space Grotesk, sans-serif', background: 'linear-gradient(135deg, #2563EB, #4F46E5)' }}>R</div>
+          <span className="font-semibold tracking-tight text-slate-800" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Mes projets</span>
         </div>
         <nav className="flex-1 px-2.5 space-y-1 overflow-y-auto">
           {nav.map(n => (
             <button key={n.id} onClick={() => setView(n.id)}
-              style={{ background: view === n.id ? '#FFFFFF' : `${n.accent}33`, borderLeft: `3px solid ${view === n.id ? n.accent : `${n.accent}99`}` }}
-              className={`w-full flex items-center gap-2.5 pl-2.5 pr-3 py-2.5 rounded-r-xl text-sm font-medium transition-colors shadow-sm ${view === n.id ? '' : 'text-white/90 hover:text-white hover:brightness-110'}`}>
-              <n.Icon size={16} style={{ color: view === n.id ? n.accent : '#FFFFFF' }} />
-              <span style={{ color: view === n.id ? '#1E293B' : undefined }}>{n.label}</span>
+              style={{ background: view === n.id ? n.accent : 'transparent' }}
+              className={`w-full flex items-center gap-2.5 pl-3 pr-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${view === n.id ? 'text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}>
+              <n.Icon size={16} style={{ color: view === n.id ? '#FFFFFF' : n.accent }} /> {n.label}
             </button>
           ))}
         </nav>
-        <div className="px-3 py-3 border-t border-white/15">
+        <div className="px-3 py-3 border-t border-slate-100">
           <div className="flex items-center gap-2 px-2 mb-2">
             {currentMember && <Avatar name={currentMember.name} size={26} />}
-            <div className="min-w-0 flex-1"><div className="text-xs font-medium text-white truncate">{currentMember?.name}</div><div className="text-[10px] text-white/60 truncate">{myEmail}</div></div>
+            <div className="min-w-0 flex-1"><div className="text-xs font-medium text-slate-700 truncate">{currentMember?.name}</div><div className="text-[10px] text-slate-400 truncate">{myEmail}</div></div>
           </div>
-          <button onClick={onSignOut} className="w-full text-xs text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-lg px-2.5 py-2 flex items-center justify-center gap-1.5"><Lock size={12} /> Se déconnecter</button>
+          <button onClick={onSignOut} className="w-full text-xs text-slate-500 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-lg px-2.5 py-2 flex items-center justify-center gap-1.5"><Lock size={12} /> Se déconnecter</button>
         </div>
       </div>
 
@@ -2405,7 +2404,7 @@ function AuthShell({ children }) {
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap');`}</style>
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 w-full max-w-sm">
         <div className="flex items-center gap-2 mb-6">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-sm shadow-md" style={{ fontFamily: 'Space Grotesk, sans-serif', background: 'linear-gradient(135deg, #6D28D9, #FB7185)' }}>R</div>
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-sm shadow-sm" style={{ fontFamily: 'Space Grotesk, sans-serif', background: 'linear-gradient(135deg, #2563EB, #4F46E5)' }}>R</div>
           <span className="font-semibold text-lg text-slate-800" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Mes projets</span>
         </div>
         {children}

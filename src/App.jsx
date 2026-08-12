@@ -175,19 +175,30 @@ const repeatLabel = (unit, every) => {
   if (unit === 'an') return n === 1 ? 'Tous les ans' : `Tous les ${n} ans`;
   return '';
 };
+// Jours de la semaine (convention JS Date.getDay() : 0 = dimanche ... 6 = samedi)
+const WEEKDAYS = [
+  { id: 1, label: 'Lundi' }, { id: 2, label: 'Mardi' }, { id: 3, label: 'Mercredi' },
+  { id: 4, label: 'Jeudi' }, { id: 5, label: 'Vendredi' }, { id: 6, label: 'Samedi' }, { id: 0, label: 'Dimanche' },
+];
+const isAvoidedDay = (iso, avoidDays) => {
+  if (!avoidDays || avoidDays.length === 0) return false;
+  return avoidDays.includes(new Date(iso + 'T00:00:00').getDay());
+};
 // Projette les prochaines occurrences d'une tâche répétitive (affichage uniquement,
 // aucune tâche réelle n'est créée — la vraie occurrence suivante n'apparaît qu'à la validation).
+// Les jours cochés dans "avoidDays" sont simplement omis de la projection.
 function projectOccurrences(task, monthsAhead = 12, maxCount = 60) {
   if (!task.deadline) return [];
   if (!task.repeatUnit || task.repeatUnit === 'aucune') return [task.deadline];
   const horizon = addMonths(todayISO(), monthsAhead);
-  const dates = [task.deadline];
+  const dates = [];
+  if (!isAvoidedDay(task.deadline, task.avoidDays)) dates.push(task.deadline);
   let cur = task.deadline;
   let count = 0;
   while (count < maxCount) {
     cur = shiftByRepeat(cur, task.repeatUnit, task.repeatEvery);
     if (cur > horizon) break;
-    dates.push(cur);
+    if (!isAvoidedDay(cur, task.avoidDays)) dates.push(cur);
     count++;
   }
   return dates;
@@ -296,8 +307,8 @@ const ROW_MAPPERS = {
   },
   projects: {
     table: 'projects',
-    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate) }),
-    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '' }),
+    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours' }),
+    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours' }),
   },
   tasks: {
     table: 'tasks',
@@ -306,7 +317,7 @@ const ROW_MAPPERS = {
       assign_mode: t.assignMode, assignee_id: t.assigneeId || null, pool: t.pool || [], raci: t.raci || {},
       priority: t.priority, importance: t.importance, scope: t.scope, status: t.status,
       start_date: d(t.startDate), deadline: d(t.deadline), time: t.time || null,
-      repeat_unit: t.repeatUnit, repeat_every: t.repeatEvery,
+      repeat_unit: t.repeatUnit, repeat_every: t.repeatEvery, avoid_days: t.avoidDays || [],
       is_governance: !!t.isGovernance, governance_type: t.governanceType || null, created_at: d(t.createdAt),
     }),
     fromRow: (r) => ({
@@ -314,7 +325,7 @@ const ROW_MAPPERS = {
       assignMode: r.assign_mode, assigneeId: r.assignee_id || '', pool: r.pool || [], raci: r.raci || {},
       priority: r.priority, importance: r.importance, scope: r.scope, status: r.status,
       startDate: r.start_date || '', deadline: r.deadline || '', time: r.time || '',
-      repeatUnit: r.repeat_unit, repeatEvery: r.repeat_every,
+      repeatUnit: r.repeat_unit, repeatEvery: r.repeat_every, avoidDays: r.avoid_days || [],
       isGovernance: !!r.is_governance, governanceType: r.governance_type || undefined, createdAt: r.created_at || '',
     }),
   },
@@ -444,6 +455,7 @@ function teamOfProjects(projectIds, tasks, projects) {
   });
   return ids;
 }
+const isProjectLate = (p) => !!(p.endDate && p.status !== 'termine' && daysBetween(p.endDate) < 0);
 
 /* ---------------------------------------------------------------------- */
 /*  Petits composants UI                                                  */
@@ -621,7 +633,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
     title: '', description: '', projectId: initialProjectId || projects[0]?.id || '',
     assignMode: 'individuel', assigneeId: '', pool: [], raci: {},
     priority: 'normale', importance: 'moyenne', scope: 'courte', status: 'a_faire', startDate: '', deadline: '', time: '',
-    repeatUnit: 'aucune', repeatEvery: 1,
+    repeatUnit: 'aucune', repeatEvery: 1, avoidDays: [],
   });
 
   const isOpenPoolTask = task && form.assignMode === 'pool' && task.pool && task.pool.length > 0 && !task.assigneeId;
@@ -808,6 +820,22 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
         {form.repeatUnit && form.repeatUnit !== 'aucune' && (
           <div className="text-xs text-slate-400 mt-1.5 flex items-center gap-1"><Repeat size={11} /> {repeatLabel(form.repeatUnit, form.repeatEvery)} — nouvelle occurrence créée automatiquement une fois "Terminé".</div>
         )}
+        {form.repeatUnit && form.repeatUnit !== 'aucune' && (
+          <div className="mt-2.5">
+            <div className="text-xs text-slate-500 mb-1.5">Jours à éviter (non travaillés / repos)</div>
+            <div className="flex flex-wrap gap-1.5">
+              {WEEKDAYS.map(w => {
+                const active = (form.avoidDays || []).includes(w.id);
+                return (
+                  <button key={w.id} type="button" disabled={locked} onClick={() => setForm(f => ({ ...f, avoidDays: (f.avoidDays || []).includes(w.id) ? f.avoidDays.filter(x => x !== w.id) : [...(f.avoidDays || []), w.id] }))}
+                    className={`text-xs px-2.5 py-1 rounded-full border ${active ? 'bg-red-50 border-red-200 text-red-700' : 'bg-white border-slate-200 text-slate-500'}`}>
+                    {w.label.slice(0, 3)}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </Field>
 
       <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
@@ -900,7 +928,7 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 
 function ProjectModal({ project, members, externalContacts, tasks, currentMemberId, onSave, onDelete, onClose }) {
   const isNew = !project;
-  const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: [], externalIds: [], startDate: '', endDate: '' });
+  const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: [], externalIds: [], startDate: '', endDate: '', status: 'en_cours' });
   const [genGovernance, setGenGovernance] = useState(false);
   const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
   const toggleExternal = (id) => setForm(f => ({ ...f, externalIds: (f.externalIds || []).includes(id) ? f.externalIds.filter(x => x !== id) : [...(f.externalIds || []), id] }));
@@ -949,6 +977,12 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
             );
           })}
           {(!externalContacts || externalContacts.length === 0) && <span className="text-xs text-slate-400">Aucun contact externe enregistré (onglet Contacts externes)</span>}
+        </div>
+      </Field>
+      <Field label="Statut du projet">
+        <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+          <button type="button" onClick={() => setForm({ ...form, status: 'en_cours' })} className={`flex-1 py-2 ${(!form.status || form.status === 'en_cours') ? 'bg-blue-600 text-white' : 'bg-white text-slate-500'}`}>En cours</button>
+          <button type="button" onClick={() => setForm({ ...form, status: 'termine' })} className={`flex-1 py-2 ${form.status === 'termine' ? 'bg-green-600 text-white' : 'bg-white text-slate-500'}`}>Terminé</button>
         </div>
       </Field>
       <div className="grid grid-cols-2 gap-3">
@@ -1226,12 +1260,13 @@ function RequestsView({ requests, members, externalContacts, perm, onApprove, on
 /*  Vue d'ensemble (Manager)                                              */
 /* ---------------------------------------------------------------------- */
 
-function Dashboard({ tasks, members, appointments, connectedAs, openTask, onClaim }) {
+function Dashboard({ tasks, members, projects, appointments, connectedAs, openTask, onClaim, onOpenProject }) {
   const active = tasks.filter(t => t.status !== 'termine');
   const overdue = active.filter(t => t.deadline && daysBetween(t.deadline) < 0);
   const dueSoon = active.filter(t => t.deadline && daysBetween(t.deadline) >= 0 && daysBetween(t.deadline) <= 3);
   const doneCount = tasks.filter(t => t.status === 'termine').length;
   const openPool = tasks.filter(t => t.assignMode === 'pool' && !t.assigneeId && t.pool && t.pool.length > 0);
+  const lateProjects = projects.filter(isProjectLate);
 
   const workload = members.map(m => {
     const mine = active.filter(t => responsibleIdsOf(t).includes(m.id));
@@ -1255,7 +1290,7 @@ function Dashboard({ tasks, members, appointments, connectedAs, openTask, onClai
           { label: 'À échéance ≤ 3j', value: dueSoon.length, color: '#B54708', bg: '#FEF8EC', Icon: Clock3 },
           { label: 'Terminées', value: doneCount, color: '#127A45', bg: '#EFFAF3', Icon: CheckCircle2 },
         ].map(k => (
-          <div key={k.label} className="bg-white rounded-2xl border border-slate-100 p-4">
+          <div key={k.label} className="bg-white rounded-2xl border border-slate-100 p-4" style={{ borderTop: `3px solid ${k.color}` }}>
             <div style={{ background: k.bg, color: k.color }} className="w-8 h-8 rounded-lg flex items-center justify-center mb-3"><k.Icon size={16} /></div>
             <div className="text-2xl font-semibold text-slate-800" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>{k.value}</div>
             <div className="text-xs text-slate-400 mt-0.5">{k.label}</div>
@@ -1302,6 +1337,20 @@ function Dashboard({ tasks, members, appointments, connectedAs, openTask, onClai
           </div>
         </div>
         <div className="lg:col-span-2 space-y-4">
+          {lateProjects.length > 0 && (
+            <div className="bg-white rounded-2xl border border-red-100 p-5">
+              <h3 className="text-sm font-semibold text-red-600 mb-3 flex items-center gap-1.5" style={{ fontFamily: 'Space Grotesk, sans-serif' }}><AlertTriangle size={15} /> Projets en retard</h3>
+              <div className="space-y-1">
+                {lateProjects.map(p => (
+                  <button key={p.id} onClick={() => onOpenProject && onOpenProject(p)} className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-red-50/50 flex items-center gap-2.5">
+                    <span style={{ background: p.color }} className="w-2.5 h-2.5 rounded-full shrink-0" />
+                    <span className="text-xs font-medium text-slate-700 flex-1 truncate">{p.name}</span>
+                    <span className="text-xs text-red-600 font-semibold">Fin prévue le {fmtDate(p.endDate)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="bg-white rounded-2xl border border-slate-100 p-5">
             <h3 className="text-sm font-semibold text-slate-700 mb-3" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>À traiter en priorité</h3>
             {urgentList.length === 0 ? <EmptyState icon={CheckCircle2} title="Rien d'urgent" /> : (
@@ -1375,8 +1424,9 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
 
   const Row = ({ t }) => {
     const responsibles = responsibleIdsOf(t).map(id => members.find(m2 => m2.id === id)).filter(Boolean);
+    const pr = PRIORITIES.find(p => p.id === t.priority);
     return (
-      <tr onClick={() => openTask(t)} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 cursor-pointer">
+      <tr onClick={() => openTask(t)} style={{ borderLeft: `3px solid ${pr.bar}` }} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 cursor-pointer">
         <td className="px-4 py-2.5">
           <div className="font-medium text-slate-700 flex items-center gap-1.5">
             {t.isGovernance && <GovIcon id={t.governanceType} size={12} className="text-purple-500 shrink-0" />}
@@ -1429,6 +1479,10 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
               <span style={{ background: g.project.color }} className="w-2 h-2 rounded-full" />
               <span className="text-xs font-semibold text-slate-500">{g.project.name}</span>
               <span className="text-xs text-slate-300">· {g.items.length} tâche{g.items.length !== 1 ? 's' : ''}</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${g.project.status === 'termine' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>{g.project.status === 'termine' ? 'Terminé' : 'En cours'}</span>
+              {isProjectLate(g.project) && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-red-50 text-red-700 flex items-center gap-1"><AlertTriangle size={10} /> En retard</span>
+              )}
               {perm.canCreateProject && (
                 <button onClick={() => editProject(g.project)} className="text-slate-300 hover:text-slate-500 p-0.5" title="Modifier ou supprimer ce projet">
                   <Pencil size={11} />
@@ -1451,7 +1505,7 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
               <span className="text-xs text-slate-300">· {g.items.length} tâche{g.items.length !== 1 ? 's' : ''}</span>
             </div>
           )}
-          <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+          <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden" style={g.project && g.project.id !== '_none' ? { borderTop: `3px solid ${g.project.color}` } : undefined}>
             <table className="w-full text-sm">
               <thead><tr className="border-b border-slate-100 text-left text-xs text-slate-400">
                 <th className="px-4 py-2.5 font-medium">Tâche</th><th className="px-4 py-2.5 font-medium">Assignée à</th>
@@ -1936,18 +1990,17 @@ function PrioritisationView({ tasks, members, openTask }) {
 
 function navFor(perm) {
   const nav = [];
-  if (perm.isManager) nav.push({ id: 'dashboard', label: "Vue d'ensemble", Icon: LayoutDashboard });
-  nav.push({ id: 'tasks', label: perm.isManager ? 'Tâches' : 'Mes tâches', Icon: ListChecks });
-  nav.push({ id: 'planning', label: 'Planning', Icon: CalendarDays });
-  nav.push({ id: 'requests', label: 'Demandes', Icon: ClipboardList });
+  if (perm.isManager) nav.push({ id: 'dashboard', label: "Vue d'ensemble", Icon: LayoutDashboard, accent: '#60A5FA' });
+  nav.push({ id: 'tasks', label: perm.isManager ? 'Tâches' : 'Mes tâches', Icon: ListChecks, accent: '#818CF8' });
+  nav.push({ id: 'planning', label: 'Planning', Icon: CalendarDays, accent: '#38BDF8' });
   if (perm.isReferent) {
-    nav.push({ id: 'gantt', label: 'Durée des projets', Icon: GanttChartSquare });
-    nav.push({ id: 'raci', label: 'Rôle des participants', Icon: Grid3x3 });
-    nav.push({ id: 'priorisation', label: 'Priorisation', Icon: Target });
+    nav.push({ id: 'gantt', label: 'Durée des projets', Icon: GanttChartSquare, accent: '#A78BFA' });
+    nav.push({ id: 'raci', label: 'Rôle des participants', Icon: Grid3x3, accent: '#2DD4BF' });
+    nav.push({ id: 'priorisation', label: 'Priorisation', Icon: Target, accent: '#FB923C' });
   }
   if (perm.isManager) {
-    nav.push({ id: 'team', label: 'Équipe et référents', Icon: Users });
-    nav.push({ id: 'contacts', label: 'Contacts externes', Icon: Building2 });
+    nav.push({ id: 'team', label: 'Équipe et référents', Icon: Users, accent: '#F472B6' });
+    nav.push({ id: 'contacts', label: 'Contacts externes', Icon: Building2, accent: '#C084FC' });
   }
   return nav;
 }
@@ -2018,8 +2071,15 @@ function ReferentApp({ session, onSignOut }) {
     setTasks(prev => existing ? prev.map(x => x.id === t.id ? t : x) : [...prev, t]);
     warnIfFailed(await upsertRow('tasks', t), 'La tâche');
     if (justCompleted && t.repeatUnit && t.repeatUnit !== 'aucune') {
-      const clone = { ...t, id: uid(), status: 'a_faire', createdAt: todayISO(),
-        startDate: shiftByRepeat(t.startDate, t.repeatUnit, t.repeatEvery), deadline: shiftByRepeat(t.deadline, t.repeatUnit, t.repeatEvery) };
+      let nextStart = shiftByRepeat(t.startDate, t.repeatUnit, t.repeatEvery);
+      let nextDeadline = shiftByRepeat(t.deadline, t.repeatUnit, t.repeatEvery);
+      let guard = 0;
+      while (isAvoidedDay(nextDeadline, t.avoidDays) && guard < 30) {
+        nextStart = shiftByRepeat(nextStart, t.repeatUnit, t.repeatEvery);
+        nextDeadline = shiftByRepeat(nextDeadline, t.repeatUnit, t.repeatEvery);
+        guard++;
+      }
+      const clone = { ...t, id: uid(), status: 'a_faire', createdAt: todayISO(), startDate: nextStart, deadline: nextDeadline };
       setTasks(prev => [...prev, clone]);
       warnIfFailed(await upsertRow('tasks', clone), 'La prochaine occurrence');
     }
@@ -2208,16 +2268,17 @@ function ReferentApp({ session, onSignOut }) {
   return (
     <div className="flex min-h-screen bg-[#F7F8FA] overflow-hidden" style={{ fontFamily: 'Inter, sans-serif' }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');`}</style>
-      <div className="w-56 shrink-0 bg-[#0F1B33] text-white flex flex-col">
+      <div className="w-56 shrink-0 text-white flex flex-col" style={{ background: 'linear-gradient(180deg, #14213F 0%, #0B1329 100%)' }}>
         <div className="px-5 py-5 flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-blue-500 flex items-center justify-center font-bold text-sm" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>R</div>
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm" style={{ fontFamily: 'Space Grotesk, sans-serif', background: 'linear-gradient(135deg, #60A5FA, #818CF8)' }}>R</div>
           <span className="font-semibold tracking-tight" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Mes projets</span>
         </div>
         <nav className="flex-1 px-2.5 space-y-0.5 overflow-y-auto">
           {nav.map(n => (
-            <button key={n.id} onClick={() => setView(n.id)} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm transition-colors ${view === n.id ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}>
-              <n.Icon size={16} /> {n.label}
-              {n.id === 'requests' && perm.canReviewRequests && pendingRequests > 0 && <span className="ml-auto bg-amber-500 text-white text-[10px] font-semibold rounded-full w-4 h-4 flex items-center justify-center">{pendingRequests}</span>}
+            <button key={n.id} onClick={() => setView(n.id)}
+              style={view === n.id ? { background: `${n.accent}26`, borderLeft: `3px solid ${n.accent}`, color: '#fff' } : { borderLeft: '3px solid transparent' }}
+              className={`w-full flex items-center gap-2.5 pl-2.5 pr-3 py-2.5 rounded-r-xl text-sm transition-colors ${view === n.id ? '' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}>
+              <n.Icon size={16} style={view === n.id ? { color: n.accent } : undefined} /> {n.label}
             </button>
           ))}
         </nav>
@@ -2262,7 +2323,7 @@ function ReferentApp({ session, onSignOut }) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-6">
-          {view === 'dashboard' && <Dashboard tasks={tasks} members={members} appointments={appointments} connectedAs={connectedAs} openTask={(t) => setTaskModal({ task: t })} onClaim={claimTask} />}
+          {view === 'dashboard' && <Dashboard tasks={tasks} members={members} projects={projects} appointments={appointments} connectedAs={connectedAs} openTask={(t) => setTaskModal({ task: t })} onClaim={claimTask} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'tasks' && <TasksView tasks={tasks} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={(projectId) => setTaskModal({ task: null, presetProjectId: projectId })} newProject={() => setProjectModal({ project: null })} editProject={(p) => setProjectModal({ project: p })} />}
           {view === 'planning' && <PlanningView members={members} tasks={tasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
           {view === 'gantt' && <GanttView tasks={tasks} members={members}
@@ -2272,7 +2333,6 @@ function ReferentApp({ session, onSignOut }) {
             projects={perm.isManager ? projects : projects.filter(p => myProjectIds(connectedAs, tasks, projects).has(p.id))}
             updateRaci={updateRaci} />}
           {view === 'priorisation' && <PrioritisationView tasks={perm.isManager ? tasks : tasks.filter(t => myProjectIds(connectedAs, tasks, projects).has(t.projectId) || isTaskOfMine(t, connectedAs))} members={members} openTask={(t) => setTaskModal({ task: t })} />}
-          {view === 'requests' && <RequestsView requests={perm.isManager ? taskRequests : perm.isReferent ? taskRequests.filter(r => teamOfProjects(myProjectIds(connectedAs, tasks, projects), tasks, projects).has(r.requesterMemberId)) : taskRequests.filter(r => r.requesterMemberId === connectedAs)} members={members} externalContacts={externalContacts} perm={perm} onApprove={approveRequest} onReject={rejectRequest} newRequest={() => setRequestModal({})} />}
           {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} onImport={importMembers} />}
           {view === 'contacts' && <ContactsView contacts={externalContacts} perm={perm} editContact={(c) => setContactModal({ contact: c })} newContact={() => setContactModal({ contact: null })} />}
         </div>

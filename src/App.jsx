@@ -39,7 +39,7 @@ const RACI_LEVELS = [
   { id: 'C', label: 'Consulté',    color: '#0D9488', bg: '#D7F5F0' },
   { id: 'I', label: 'Informé',     color: '#475467', bg: '#F1F2F4' },
 ];
-const RACI_CYCLE = ['', 'R', 'A', 'C', 'I'];
+const RACI_CYCLE = ['', 'I', 'R', 'A', 'C'];
 
 const IMPORTANCE = [
   { id: 'critique', label: 'Critique', color: '#B42318', bg: '#FEE4E2' },
@@ -207,7 +207,7 @@ function projectOccurrences(task, monthsAhead = 12, maxCount = 60) {
 // Étapes types de conduite de projet — deviennent de vraies tâches (isGovernance) mêlées aux tâches du projet
 const GOVERNANCE_TYPES = [
   { id: 'preparation', label: 'Préparation du changement', Icon: Megaphone,      hint: 'Cadrage, parties prenantes, plan de communication' },
-  { id: 'kickoff',      label: 'Kick-off',                  Icon: Flag,           hint: 'Lancement officiel du projet' },
+  { id: 'kickoff',      label: 'Réunion de lancement',      Icon: Flag,           hint: 'Lancement officiel du projet' },
   { id: 'demarrage',    label: 'Démarrage opérationnel',    Icon: PlayCircle,     hint: '' },
   { id: 'suivi',        label: 'Point de suivi régulier',   Icon: Repeat,         hint: 'Comité de suivi / pilotage' },
   { id: 'revue',        label: 'Revue à mi-parcours',       Icon: MilestoneIcon,  hint: '' },
@@ -229,7 +229,7 @@ function buildGovernanceTasks(start, end, projectId, creatorId) {
   });
   return [
     base('preparation', 'Préparation du changement', start, { importance: 'elevee', description: 'Cadrage, parties prenantes, plan de communication' }),
-    base('kickoff', 'Kick-off', addDays(start, Math.min(7, Math.max(1, Math.round(span * 0.05)))), { priority: 'haute' }),
+    base('kickoff', 'Réunion de lancement', addDays(start, Math.min(7, Math.max(1, Math.round(span * 0.05)))), { priority: 'haute' }),
     base('demarrage', 'Démarrage opérationnel', addDays(start, Math.min(14, Math.max(2, Math.round(span * 0.08))))),
     base('suivi', 'Point de suivi', addDays(start, 14), { repeatUnit: 'semaine', repeatEvery: 1, description: 'Comité de suivi' }),
     base('revue', 'Revue à mi-parcours', mid),
@@ -594,13 +594,22 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
   const availableMembers = projectTeamIds.length > 0 ? members.filter(m => projectTeamIds.includes(m.id)) : members;
 
   const handleProjectChange = (newProjectId) => {
-    const team = projects.find(p => p.id === newProjectId)?.teamIds || [];
+    const newProject = projects.find(p => p.id === newProjectId);
+    const team = newProject?.teamIds || [];
     const stillValid = (id) => team.length === 0 || team.includes(id);
+    const clamp = (date) => {
+      if (!date) return date;
+      if (newProject?.startDate && date < newProject.startDate) return newProject.startDate;
+      if (newProject?.endDate && date > newProject.endDate) return newProject.endDate;
+      return date;
+    };
     setForm(f => ({
       ...f, projectId: newProjectId,
       assigneeId: stillValid(f.assigneeId) ? f.assigneeId : '',
       pool: f.pool.filter(stillValid),
       raci: Object.fromEntries(Object.entries(f.raci).filter(([id]) => stillValid(id))),
+      startDate: clamp(f.startDate),
+      deadline: clamp(f.deadline),
     }));
   };
 
@@ -609,13 +618,13 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
       return { ...f, pool: f.pool.includes(id) ? f.pool.filter(x => x !== id) : [...f.pool, id] };
     }
     const raci = { ...f.raci };
-    if (raci[id]) delete raci[id]; else raci[id] = 'R';
+    if (raci[id]) delete raci[id]; else raci[id] = 'I';
     return { ...f, raci };
   });
   const selectAllParticipants = () => setForm(f => {
     if (f.assignMode === 'pool') return { ...f, pool: availableMembers.map(m => m.id) };
     const raci = { ...f.raci };
-    availableMembers.forEach(m => { if (!raci[m.id]) raci[m.id] = 'R'; });
+    availableMembers.forEach(m => { if (!raci[m.id]) raci[m.id] = 'I'; });
     return { ...f, raci };
   });
   const clearAllParticipants = () => setForm(f => f.assignMode === 'pool' ? { ...f, pool: [] } : { ...f, raci: {} });
@@ -742,15 +751,20 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
       </div>
       <div className="grid grid-cols-3 gap-3">
         <Field label="Date de début (pour Durée des projets)">
-          <input disabled={locked} type="date" min={todayISO()} className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} />
+          <input disabled={locked} type="date" min={currentProject?.startDate || todayISO()} max={currentProject?.endDate || undefined} className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} />
         </Field>
         <Field label="Échéance">
-          <input disabled={locked} type="date" min={form.startDate || todayISO()} className={inputCls} value={form.deadline || ''} onChange={e => setForm({ ...form, deadline: e.target.value })} />
+          <input disabled={locked} type="date" min={form.startDate || currentProject?.startDate || todayISO()} max={currentProject?.endDate || undefined} className={inputCls} value={form.deadline || ''} onChange={e => setForm({ ...form, deadline: e.target.value })} />
         </Field>
         <Field label="Heure (si tâche d'un jour)">
           <input disabled={locked} type="time" className={inputCls} value={form.time || ''} onChange={e => setForm({ ...form, time: e.target.value })} />
         </Field>
       </div>
+      {currentProject?.startDate && currentProject?.endDate && (
+        <div className="text-xs text-slate-400 -mt-2.5 mb-3.5">
+          Calendrier du projet « {currentProject.name} » : {fmtDate(currentProject.startDate)} → {fmtDate(currentProject.endDate)} — les dates de la tâche doivent rester dans cet intervalle.
+        </div>
+      )}
       <Field label="Répétition">
         <div className="grid grid-cols-2 gap-3">
           <select disabled={locked} className={inputCls} value={form.repeatUnit || 'aucune'} onChange={e => setForm({ ...form, repeatUnit: e.target.value })}>
@@ -881,6 +895,13 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
 
   const handleSubmit = () => {
     const id = form.id || uid();
+    if (form.startDate && form.endDate) {
+      const outOfRange = (tasks || []).filter(t => t.projectId === id && ((t.startDate && t.startDate < form.startDate) || (t.deadline && t.deadline > form.endDate)));
+      if (outOfRange.length) {
+        const msg = `${outOfRange.length} tâche${outOfRange.length > 1 ? 's' : ''} de ce projet ${outOfRange.length > 1 ? 'ont' : 'a'} des dates en dehors de ce calendrier (${fmtDate(form.startDate)} → ${fmtDate(form.endDate)}). Continuer quand même ?`;
+        if (!window.confirm(msg)) return;
+      }
+    }
     const projectObj = { ...form, id };
     const governanceTasks = (isNew && genGovernance && form.startDate && form.endDate) ? buildGovernanceTasks(form.startDate, form.endDate, id, currentMemberId) : [];
     onSave(projectObj, governanceTasks);
@@ -935,7 +956,7 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
         <Field label="Début du projet (optionnel)"><input type="date" min={todayISO()} className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} /></Field>
         <Field label="Fin du projet (optionnel)"><input type="date" min={form.startDate || todayISO()} className={inputCls} value={form.endDate || ''} onChange={e => setForm({ ...form, endDate: e.target.value })} /></Field>
       </div>
-      <div className="text-xs text-slate-400 -mt-2.5 mb-3.5">Sert à afficher la durée du projet dans "Durée des projets", même sans tâches ni étapes de conduite.</div>
+      <div className="text-xs text-slate-400 -mt-2.5 mb-3.5">Une fois les deux dates renseignées, elles deviennent le calendrier du projet : les tâches créées dedans ne pourront pas avoir de date en dehors.</div>
       {isNew && (
         <div className="bg-slate-50 rounded-xl p-3.5 mb-3.5">
           <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
@@ -2292,31 +2313,33 @@ function ReferentApp({ session, onSignOut }) {
   return (
     <div className="flex min-h-screen bg-[#F7F8FA] overflow-hidden" style={{ fontFamily: 'Inter, sans-serif' }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');`}</style>
-      <div className="w-56 shrink-0 text-white flex flex-col" style={{ background: 'linear-gradient(180deg, #14213F 0%, #0B1329 100%)' }}>
+      <div className="w-56 shrink-0 text-white flex flex-col" style={{ background: 'linear-gradient(165deg, #4338CA 0%, #6D28D9 48%, #C026D3 100%)' }}>
         <div className="px-5 py-5 flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm" style={{ fontFamily: 'Space Grotesk, sans-serif', background: 'linear-gradient(135deg, #60A5FA, #818CF8)' }}>R</div>
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm shadow-md" style={{ fontFamily: 'Space Grotesk, sans-serif', background: 'linear-gradient(135deg, #FBBF24, #FB7185)' }}>R</div>
           <span className="font-semibold tracking-tight" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Mes projets</span>
         </div>
-        <nav className="flex-1 px-2.5 space-y-0.5 overflow-y-auto">
+        <nav className="flex-1 px-2.5 space-y-1 overflow-y-auto">
           {nav.map(n => (
             <button key={n.id} onClick={() => setView(n.id)}
-              style={{ background: view === n.id ? `${n.accent}40` : `${n.accent}1A`, borderLeft: `3px solid ${n.accent}` }}
-              className={`w-full flex items-center gap-2.5 pl-2.5 pr-3 py-2.5 rounded-r-xl text-sm transition-colors ${view === n.id ? 'text-white' : 'text-slate-200 hover:text-white'}`}>
-              <n.Icon size={16} style={{ color: n.accent }} /> {n.label}
+              style={{ background: view === n.id ? '#FFFFFF' : `${n.accent}33`, borderLeft: `3px solid ${view === n.id ? n.accent : `${n.accent}99`}` }}
+              className={`w-full flex items-center gap-2.5 pl-2.5 pr-3 py-2.5 rounded-r-xl text-sm font-medium transition-colors shadow-sm ${view === n.id ? '' : 'text-white/90 hover:text-white hover:brightness-110'}`}>
+              <n.Icon size={16} style={{ color: view === n.id ? n.accent : '#FFFFFF' }} />
+              <span style={{ color: view === n.id ? '#1E293B' : undefined }}>{n.label}</span>
             </button>
           ))}
         </nav>
-        <div className="px-3 py-3 border-t border-white/5">
+        <div className="px-3 py-3 border-t border-white/15">
           <div className="flex items-center gap-2 px-2 mb-2">
             {currentMember && <Avatar name={currentMember.name} size={26} />}
-            <div className="min-w-0 flex-1"><div className="text-xs font-medium text-white truncate">{currentMember?.name}</div><div className="text-[10px] text-slate-400 truncate">{myEmail}</div></div>
+            <div className="min-w-0 flex-1"><div className="text-xs font-medium text-white truncate">{currentMember?.name}</div><div className="text-[10px] text-white/60 truncate">{myEmail}</div></div>
           </div>
-          <button onClick={onSignOut} className="w-full text-xs text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg px-2.5 py-2 flex items-center justify-center gap-1.5"><Lock size={12} /> Se déconnecter</button>
+          <button onClick={onSignOut} className="w-full text-xs text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-lg px-2.5 py-2 flex items-center justify-center gap-1.5"><Lock size={12} /> Se déconnecter</button>
         </div>
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white relative">
+          <div className="absolute top-0 left-0 right-0 h-1" style={{ background: `linear-gradient(90deg, ${nav.find(n => n.id === view)?.accent || '#818CF8'}, transparent)` }} />
           <h2 className="font-semibold text-slate-800 text-lg" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>{nav.find(n => n.id === view)?.label}</h2>
           <div className="relative">
             <button onClick={() => setNotifOpen(o => !o)} className="relative p-2 rounded-lg hover:bg-slate-50 text-slate-500">
@@ -2382,7 +2405,7 @@ function AuthShell({ children }) {
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap');`}</style>
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 w-full max-w-sm">
         <div className="flex items-center gap-2 mb-6">
-          <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center font-bold text-white text-sm" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>R</div>
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-sm shadow-md" style={{ fontFamily: 'Space Grotesk, sans-serif', background: 'linear-gradient(135deg, #6D28D9, #FB7185)' }}>R</div>
           <span className="font-semibold text-lg text-slate-800" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Mes projets</span>
         </div>
         {children}

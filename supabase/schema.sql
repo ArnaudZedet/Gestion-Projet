@@ -30,6 +30,7 @@ create table if not exists projects (
   status text not null default 'en_cours',
   repeat_unit text not null default 'aucune',
   repeat_every int not null default 1,
+  late_notified_at timestamptz,
   updated_at timestamptz not null default now()
 );
 

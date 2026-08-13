@@ -136,8 +136,15 @@ Deux fonctionnalités serveur ont été ajoutées :
   Supabase (email + choix du mot de passe) part automatiquement — plus
   besoin de la refaire à la main dans le dashboard Supabase.
 - **Notifications par email** : un collaborateur reçoit un email quand il
-  est affecté/retiré d'un projet, quand les dates ou le statut d'un projet
-  changent, ou quand une tâche lui est assignée.
+  est affecté à un nouveau projet, retiré d'un projet, ou qu'une tâche lui
+  est assignée (y compris quand ça vient d'un tirage par rotation). Pour ne
+  pas surcharger les boîtes mail, les simples changements de date/statut
+  d'un projet ne déclenchent volontairement rien.
+- **Alertes manager** : un email quand un projet dépasse sa date de fin sans
+  être marqué "Terminé" (une seule fois par projet), et un récapitulatif
+  hebdomadaire des projets en cours chaque lundi matin. Ces deux-là tournent
+  sur une horloge (voir étape 5 ci-dessous), indépendamment de toute action
+  dans l'app.
 
 Ces deux fonctions vivent dans le dossier `api/` (fonctions serveur Vercel)
 et ont besoin de secrets qui ne doivent **jamais** être mis dans le code ni

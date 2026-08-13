@@ -262,8 +262,8 @@ const ROW_MAPPERS = {
   },
   projects: {
     table: 'projects',
-    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1 }),
-    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1 }),
+    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null }),
+    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null }),
   },
   tasks: {
     table: 'tasks',
@@ -587,6 +587,28 @@ function RaciPicker({ memberId, value, disabled, onChange }) {
   );
 }
 
+// Rangée de boutons de sélection groupée ("Tout Radio", "Tout Manipulateur"...)
+// pour un ensemble de pôles (service ou fonction), avec une étiquette de
+// catégorie pour bien les distinguer.
+function PoolButtonRow({ label, groups, isSelected, onToggle, disabled }) {
+  if (!groups.length) return null;
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide shrink-0">{label}</span>
+      {groups.map(g => {
+        const empty = g.ids.length === 0;
+        const allIn = !empty && g.ids.every(id => isSelected(id));
+        return (
+          <button key={g.label} type="button" disabled={disabled || empty} onClick={() => onToggle(g.ids)}
+            className={`text-xs px-2 py-1 rounded-full border font-medium ${empty ? 'opacity-40 cursor-not-allowed bg-slate-50 border-slate-200 text-slate-400' : allIn ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
+            Tout {g.label} ({g.ids.length})
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function TaskModal({ task, initialProjectId, members, projects, perm, currentMemberId, onSave, onDelete, onClaim, onDuplicate, onClose }) {
   const [form, setForm] = useState(task || {
     title: '', description: '', projectId: initialProjectId || projects[0]?.id || '',
@@ -642,10 +664,8 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
     return { ...f, raci };
   });
   const clearAllParticipants = () => setForm(f => f.assignMode === 'pool' ? { ...f, pool: [] } : { ...f, raci: {} });
-  const poolGroups = [
-    ...SERVICES.map(s => ({ label: s, ids: availableMembers.filter(m => (m.services || []).includes(s)).map(m => m.id) })),
-    ...FUNCTIONS.map(fn => ({ label: fn, ids: availableMembers.filter(m => m.role === fn).map(m => m.id) })),
-  ];
+  const servicePoolGroups = SERVICES.map(s => ({ label: s, ids: availableMembers.filter(m => (m.services || []).includes(s)).map(m => m.id) }));
+  const functionPoolGroups = FUNCTIONS.map(fn => ({ label: fn, ids: availableMembers.filter(m => m.role === fn).map(m => m.id) }));
   const togglePoolParticipant = (ids) => setForm(f => {
     if (f.assignMode === 'pool') {
       const allIn = ids.every(id => f.pool.includes(id));
@@ -708,24 +728,14 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
 
       {form.assignMode === 'pool' && (
         <Field label="Candidats (le premier qui la prend l'obtient)">
-          <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
-            <div className="flex flex-wrap gap-1.5">
-              {poolGroups.map(g => {
-                const empty = g.ids.length === 0;
-                const allIn = !empty && g.ids.every(id => form.pool.includes(id));
-                return (
-                  <button key={g.label} type="button" disabled={locked || empty} onClick={() => togglePoolParticipant(g.ids)}
-                    className={`text-xs px-2 py-1 rounded-full border font-medium ${empty ? 'opacity-40 cursor-not-allowed bg-slate-50 border-slate-200 text-slate-400' : allIn ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
-                    Tout {g.label} ({g.ids.length})
-                  </button>
-                );
-              })}
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button type="button" disabled={locked} onClick={selectAllParticipants} className="text-xs text-blue-600 hover:underline">Tout cocher</button>
-              <span className="text-slate-300">·</span>
-              <button type="button" disabled={locked} onClick={clearAllParticipants} className="text-xs text-slate-400 hover:underline">Tout décocher</button>
-            </div>
+          <div className="flex items-center justify-end gap-2 mb-1.5">
+            <button type="button" disabled={locked} onClick={selectAllParticipants} className="text-xs text-blue-600 hover:underline">Tout cocher</button>
+            <span className="text-slate-300">·</span>
+            <button type="button" disabled={locked} onClick={clearAllParticipants} className="text-xs text-slate-400 hover:underline">Tout décocher</button>
+          </div>
+          <div className="space-y-1.5 mb-2">
+            <PoolButtonRow label="Service" groups={servicePoolGroups} isSelected={id => form.pool.includes(id)} onToggle={togglePoolParticipant} disabled={locked} />
+            <PoolButtonRow label="Fonction" groups={functionPoolGroups} isSelected={id => form.pool.includes(id)} onToggle={togglePoolParticipant} disabled={locked} />
           </div>
           <div className="flex flex-wrap gap-1.5">
             {availableMembers.map(m => {
@@ -744,24 +754,14 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
 
       {form.assignMode === 'equipe' && (
         <Field label="Participants et rôle de chacun (R/A/C/I)">
-          <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
-            <div className="flex flex-wrap gap-1.5">
-              {poolGroups.map(g => {
-                const empty = g.ids.length === 0;
-                const allIn = !empty && g.ids.every(id => !!form.raci[id]);
-                return (
-                  <button key={g.label} type="button" disabled={locked || empty} onClick={() => togglePoolParticipant(g.ids)}
-                    className={`text-xs px-2 py-1 rounded-full border font-medium ${empty ? 'opacity-40 cursor-not-allowed bg-slate-50 border-slate-200 text-slate-400' : allIn ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
-                    Tout {g.label} ({g.ids.length})
-                  </button>
-                );
-              })}
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button type="button" disabled={locked} onClick={selectAllParticipants} className="text-xs text-blue-600 hover:underline">Tout cocher</button>
-              <span className="text-slate-300">·</span>
-              <button type="button" disabled={locked} onClick={clearAllParticipants} className="text-xs text-slate-400 hover:underline">Tout décocher</button>
-            </div>
+          <div className="flex items-center justify-end gap-2 mb-1.5">
+            <button type="button" disabled={locked} onClick={selectAllParticipants} className="text-xs text-blue-600 hover:underline">Tout cocher</button>
+            <span className="text-slate-300">·</span>
+            <button type="button" disabled={locked} onClick={clearAllParticipants} className="text-xs text-slate-400 hover:underline">Tout décocher</button>
+          </div>
+          <div className="space-y-1.5 mb-2">
+            <PoolButtonRow label="Service" groups={servicePoolGroups} isSelected={id => !!form.raci[id]} onToggle={togglePoolParticipant} disabled={locked} />
+            <PoolButtonRow label="Fonction" groups={functionPoolGroups} isSelected={id => !!form.raci[id]} onToggle={togglePoolParticipant} disabled={locked} />
           </div>
           <div className="space-y-1.5">
             {availableMembers.map(m => {
@@ -975,10 +975,8 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
   const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', repeatUnit: 'aucune', repeatEvery: 1 });
   const [genGovernance, setGenGovernance] = useState(false);
   const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
-  const poolGroups = [
-    ...SERVICES.map(s => ({ label: s, ids: members.filter(m => (m.services || []).includes(s)).map(m => m.id) })),
-    ...FUNCTIONS.map(f => ({ label: f, ids: members.filter(m => m.role === f).map(m => m.id) })),
-  ];
+  const servicePoolGroups = SERVICES.map(s => ({ label: s, ids: members.filter(m => (m.services || []).includes(s)).map(m => m.id) }));
+  const functionPoolGroups = FUNCTIONS.map(f => ({ label: f, ids: members.filter(m => m.role === f).map(m => m.id) }));
   const togglePool = (ids) => setForm(f => {
     const allIn = ids.every(id => f.teamIds.includes(id));
     return { ...f, teamIds: allIn ? f.teamIds.filter(id => !ids.includes(id)) : Array.from(new Set([...f.teamIds, ...ids])) };
@@ -1012,20 +1010,10 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
         </div>
       </Field>
       <Field label="Équipe affectée">
-        {poolGroups.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-2">
-            {poolGroups.map(g => {
-              const empty = g.ids.length === 0;
-              const allIn = !empty && g.ids.every(id => form.teamIds.includes(id));
-              return (
-                <button key={g.label} type="button" disabled={empty} onClick={() => togglePool(g.ids)}
-                  className={`text-xs px-2.5 py-1 rounded-full border font-medium flex items-center gap-1 ${empty ? 'opacity-40 cursor-not-allowed bg-slate-50 border-slate-200 text-slate-400' : allIn ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
-                  <Users size={11} /> Tout {g.label} ({g.ids.length})
-                </button>
-              );
-            })}
-          </div>
-        )}
+        <div className="space-y-1.5 mb-2">
+          <PoolButtonRow label="Service" groups={servicePoolGroups} isSelected={id => form.teamIds.includes(id)} onToggle={togglePool} />
+          <PoolButtonRow label="Fonction" groups={functionPoolGroups} isSelected={id => form.teamIds.includes(id)} onToggle={togglePool} />
+        </div>
         <div className="flex flex-wrap gap-1.5">
           {members.map(m => {
             const active = form.teamIds.includes(m.id);
@@ -2233,8 +2221,6 @@ function ReferentApp({ session, onSignOut }) {
     } catch { return false; }
   };
 
-  const PROJECT_STATUS_LABELS = { en_cours: 'En cours', termine: 'Terminé' };
-
   const notifyNewProjectTeam = (project) => {
     (project.teamIds || []).filter(id => id !== connectedAs).forEach(id => {
       const m = members.find(x => x.id === id);
@@ -2258,22 +2244,20 @@ function ReferentApp({ session, onSignOut }) {
       if (m?.email) notifyByEmail([m.email], `Vous avez été retiré(e) du projet « ${next.name} »`,
         `<p>Bonjour ${m.name},</p><p>Vous n'êtes plus affecté(e) au projet <strong>${next.name}</strong>.</p>`);
     });
-
-    const changes = [];
-    if (prev.status !== next.status) changes.push(`Statut : ${PROJECT_STATUS_LABELS[prev.status] || prev.status || '—'} → ${PROJECT_STATUS_LABELS[next.status] || next.status || '—'}`);
-    if (prev.startDate !== next.startDate) changes.push(`Date de début : ${fmtDateLong(prev.startDate)} → ${fmtDateLong(next.startDate)}`);
-    if (prev.endDate !== next.endDate) changes.push(`Date de fin : ${fmtDateLong(prev.endDate)} → ${fmtDateLong(next.endDate)}`);
-    if (changes.length) {
-      const recipients = nextTeam.filter(id => id !== connectedAs).map(id => members.find(m => m.id === id)?.email).filter(Boolean);
-      notifyByEmail(recipients, `Le projet « ${next.name} » a évolué`,
-        `<p>Le projet <strong>${next.name}</strong> a été mis à jour :</p><ul>${changes.map(c => `<li>${c}</li>`).join('')}</ul>`);
-    }
+    // Volontairement pas de notification sur les simples changements de dates/statut
+    // du projet : pour ne pas surcharger les emails, on ne notifie que
+    // l'implication dans un nouveau projet ou un changement de rôle.
   };
 
+  // Notifie qui est nouvellement "responsable" d'une tâche : nouvel assigné
+  // individuel, nouvel ajout au pool, ou nouvelle personne au rôle "R" (RACI)
+  // — y compris quand ce changement vient d'un tirage par rotation.
   const notifyTaskAssignment = (existing, t) => {
     const project = projects.find(p => p.id === t.projectId);
-    const prevAssignees = new Set([existing?.assigneeId, ...(existing?.pool || [])].filter(Boolean));
-    const nextAssignees = new Set([t.assigneeId, ...(t.pool || [])].filter(Boolean));
+    const prevR = Object.entries(existing?.raci || {}).filter(([, r]) => r === 'R').map(([id]) => id);
+    const nextR = Object.entries(t.raci || {}).filter(([, r]) => r === 'R').map(([id]) => id);
+    const prevAssignees = new Set([existing?.assigneeId, ...(existing?.pool || []), ...prevR].filter(Boolean));
+    const nextAssignees = new Set([t.assigneeId, ...(t.pool || []), ...nextR].filter(Boolean));
     const newlyAssigned = [...nextAssignees].filter(id => !prevAssignees.has(id) && id !== connectedAs);
     newlyAssigned.forEach(id => {
       const m = members.find(x => x.id === id);
@@ -2338,6 +2322,7 @@ function ReferentApp({ session, onSignOut }) {
       }
       setTasks(prev => [...prev, clone]);
       warnIfFailed(await upsertRow('tasks', clone), 'La prochaine occurrence');
+      notifyTaskAssignment(t, clone);
     }
     setTaskModal(null);
   };
@@ -2410,10 +2395,14 @@ function ReferentApp({ session, onSignOut }) {
     setMemberModal(null);
   };
 
-  const saveProject = async (projectObj, governanceTasks) => {
-    const prevProject = projects.find(p => p.id === projectObj.id);
+  const saveProject = async (projectObjInput, governanceTasks) => {
+    const prevProject = projects.find(p => p.id === projectObjInput.id);
     const exists = !!prevProject;
-    const justCompleted = exists && prevProject.status !== 'termine' && projectObj.status === 'termine';
+    const justCompleted = exists && prevProject.status !== 'termine' && projectObjInput.status === 'termine';
+    // Si les dates ou le statut changent, on réarme l'alerte de retard pour
+    // qu'elle puisse se redéclencher si le projet redevient en retard plus tard.
+    const datesOrStatusChanged = exists && (prevProject.endDate !== projectObjInput.endDate || prevProject.status !== projectObjInput.status);
+    const projectObj = datesOrStatusChanged ? { ...projectObjInput, lateNotifiedAt: null } : projectObjInput;
     setProjects(prev => exists ? prev.map(p => p.id === projectObj.id ? projectObj : p) : [...prev, projectObj]);
     upsertRow('projects', projectObj);
     if (governanceTasks && governanceTasks.length) {
@@ -2430,7 +2419,7 @@ function ReferentApp({ session, onSignOut }) {
     if (justCompleted && projectObj.repeatUnit && projectObj.repeatUnit !== 'aucune' && projectObj.startDate && projectObj.endDate) {
       const nextStart = shiftByRepeat(projectObj.startDate, projectObj.repeatUnit, projectObj.repeatEvery);
       const nextEnd = shiftByRepeat(projectObj.endDate, projectObj.repeatUnit, projectObj.repeatEvery);
-      const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd };
+      const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd, lateNotifiedAt: null };
       setProjects(prev => [...prev, newProject]);
       await upsertRow('projects', newProject);
 
@@ -2455,6 +2444,7 @@ function ReferentApp({ session, onSignOut }) {
       if (clonedTasks.length) {
         setTasks(prev => [...prev, ...clonedTasks]);
         await insertRows('tasks', clonedTasks);
+        oldTasks.forEach((t, i) => notifyTaskAssignment(t, clonedTasks[i]));
       }
     }
     setProjectModal(null);

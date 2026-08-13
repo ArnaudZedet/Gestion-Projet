@@ -59,6 +59,12 @@ const isImportant = (t) => t.importance === 'critique' || t.importance === 'elev
 const PROJECT_COLORS = ['#2563EB', '#0D9488', '#B54708', '#7C3AED', '#B42318', '#0369A1', '#4D7C0F'];
 const FUNCTIONS = ['Manipulateur', 'Secrétaire', 'Aide manipulateur', 'Médecin'];
 const SERVICES = ['Radio', 'Scanner', 'IRM'];
+// Service d'un projet (distinct des services d'un collaborateur, qui peut en
+// avoir plusieurs) — un projet a un seul service parmi ceux-ci, "Autre" inclus.
+const PROJECT_SERVICES = ['Radio', 'Scanner', 'IRM', 'Autre'];
+// Couleur dominante par service, utilisée pour regrouper visuellement les
+// projets par service (distincte de la couleur propre à chaque projet).
+const SERVICE_COLORS = { Radio: '#2563EB', Scanner: '#0D9488', IRM: '#7C3AED', Autre: '#64748B' };
 // Pôles croisés service + fonction (ex. "Manipulateur IRM") — seules les
 // combinaisons qui concernent au moins une personne sont retenues, pour ne
 // pas noyer l'écran de boutons vides.
@@ -278,8 +284,8 @@ const ROW_MAPPERS = {
   },
   projects: {
     table: 'projects',
-    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null, responsible_id: p.responsibleId || null, rotate_responsible: !!p.rotateResponsible, responsible_rotation_pool: p.responsibleRotationPool || [] }),
-    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null, responsibleId: r.responsible_id || '', rotateResponsible: !!r.rotate_responsible, responsibleRotationPool: r.responsible_rotation_pool || [] }),
+    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, service: p.service || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null, responsible_id: p.responsibleId || null, rotate_responsible: !!p.rotateResponsible, responsible_rotation_pool: p.responsibleRotationPool || [] }),
+    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', service: r.service || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null, responsibleId: r.responsible_id || '', rotateResponsible: !!r.rotate_responsible, responsibleRotationPool: r.responsible_rotation_pool || [] }),
   },
   tasks: {
     table: 'tasks',
@@ -1013,7 +1019,7 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 
 function ProjectModal({ project, members, externalContacts, tasks, currentMemberId, onSave, onDelete, onClose }) {
   const isNew = !project;
-  const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', repeatUnit: 'aucune', repeatEvery: 1, responsibleId: '', rotateResponsible: false, responsibleRotationPool: [] });
+  const [form, setForm] = useState(project || { name: '', description: '', service: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', repeatUnit: 'aucune', repeatEvery: 1, responsibleId: '', rotateResponsible: false, responsibleRotationPool: [] });
   const [genGovernance, setGenGovernance] = useState(false);
   const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
   const comboPoolGroups = combinedPoolGroups(members);
@@ -1047,6 +1053,12 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
   return (
     <Modal title={project ? 'Modifier le projet' : 'Nouveau projet'} onClose={onClose} wide>
       <Field label="Nom du projet"><input className={inputCls} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></Field>
+      <Field label="Service du projet">
+        <select className={inputCls} value={form.service || ''} onChange={e => setForm({ ...form, service: e.target.value })}>
+          <option value="">— aucun —</option>
+          {PROJECT_SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </Field>
       <Field label="Description"><textarea className={inputCls} rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></Field>
       <Field label="Couleur">
         <div className="flex gap-2">
@@ -1563,11 +1575,27 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
   };
 
   const grouped = filterProject === 'all';
-  const groups = grouped
+  const projectGroups = grouped
     ? visibleProjects.map(p => ({ project: p, items: filtered.filter(t => t.projectId === p.id).sort(byDeadline) })).filter(g => g.items.length > 0)
     : [{ project: projects.find(p => p.id === filterProject), items: [...filtered].sort(byDeadline) }];
   const noProject = filtered.filter(t => !projects.some(p => p.id === t.projectId)).sort(byDeadline);
-  if (grouped && noProject.length) groups.push({ project: { id: '_none', name: 'Sans projet', color: '#94A3B8' }, items: noProject });
+  const noProjectGroup = grouped && noProject.length ? { project: { id: '_none', name: 'Sans projet', color: '#94A3B8' }, items: noProject } : null;
+
+  // Regroupement par service (couleur dominante), puis par ordre chronologique
+  // (date de début du projet) à l'intérieur de chaque service.
+  const byProjectStart = (a, b) => {
+    const sa = a.project.startDate, sb = b.project.startDate;
+    if (!sa && !sb) return 0;
+    if (!sa) return 1;
+    if (!sb) return -1;
+    return sa.localeCompare(sb);
+  };
+  const serviceBuckets = grouped
+    ? [
+        ...PROJECT_SERVICES.map(s => ({ service: s, groups: projectGroups.filter(g => g.project.service === s).sort(byProjectStart) })),
+        { service: null, groups: projectGroups.filter(g => !g.project.service).sort(byProjectStart) },
+      ].filter(b => b.groups.length > 0)
+    : [];
 
   const Row = ({ t }) => {
     const responsibles = responsibleIdsOf(t).map(id => members.find(m2 => m2.id === id)).filter(Boolean);
@@ -1595,6 +1623,53 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
     );
   };
 
+  const ProjectGroupBlock = ({ g }) => (
+    <div className="mb-4">
+      {g.project && g.project.id !== '_none' && (
+        <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-t-2xl flex-wrap" style={{ background: `linear-gradient(120deg, ${g.project.color}, ${g.project.color}AA)` }}>
+          <span className="text-xs font-semibold text-white">{g.project.name}</span>
+          <span className="text-xs text-white/70">· {g.items.length} tâche{g.items.length !== 1 ? 's' : ''}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-white/25 text-white">{g.project.status === 'termine' ? 'Terminé' : 'En cours'}</span>
+          {isProjectLate(g.project) && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-red-500 text-white flex items-center gap-1"><AlertTriangle size={10} /> En retard</span>
+          )}
+          {g.project.responsibleId && (
+            <span className="text-[10px] text-white/80 flex items-center gap-1">Responsable : {members.find(m => m.id === g.project.responsibleId)?.name || '—'}</span>
+          )}
+          {perm.canCreateProject && (
+            <button onClick={() => editProject(g.project)} className="text-white/70 hover:text-white p-0.5" title="Modifier ou supprimer ce projet">
+              <Pencil size={11} />
+            </button>
+          )}
+          {perm.canCreateTask && (
+            <button onClick={() => newTask(g.project.id)} className="text-white/70 hover:text-white p-0.5" title="Nouvelle tâche dans ce projet">
+              <Plus size={12} />
+            </button>
+          )}
+          {g.project.externalIds && g.project.externalIds.length > 0 && (
+            <span className="text-[10px] text-white bg-white/25 px-1.5 py-0.5 rounded-full flex items-center gap-1"><Building2 size={10} />{g.project.externalIds.length}</span>
+          )}
+        </div>
+      )}
+      {g.project && g.project.id === '_none' && (
+        <div className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-t-2xl bg-slate-100">
+          <span className="text-xs font-semibold text-slate-500">{g.project.name}</span>
+          <span className="text-xs text-slate-400">· {g.items.length} tâche{g.items.length !== 1 ? 's' : ''}</span>
+        </div>
+      )}
+      <div className="bg-white rounded-b-2xl border border-t-0 border-slate-100 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead><tr className="border-b border-slate-100 text-left text-xs text-slate-400">
+            <th className="px-4 py-2.5 font-medium">Tâche</th><th className="px-4 py-2.5 font-medium">Assignée à</th>
+            <th className="px-4 py-2.5 font-medium">Envergure</th><th className="px-4 py-2.5 font-medium">Priorité</th>
+            <th className="px-4 py-2.5 font-medium">Statut</th><th className="px-4 py-2.5 font-medium">Échéance</th>
+          </tr></thead>
+          <tbody>{g.items.map(t => <Row key={t.id} t={t} />)}</tbody>
+        </table>
+      </div>
+    </div>
+  );
+
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -1617,54 +1692,29 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
         </div>
       </div>
 
-      {groups.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-100"><EmptyState icon={Inbox} title="Aucune tâche" subtitle="Créez une tâche ou ajustez les filtres." /></div>
-      ) : groups.map(g => (
-        <div key={g.project?.id || 'x'} className="mb-4">
-          {g.project && g.project.id !== '_none' && (
-            <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-t-2xl flex-wrap" style={{ background: `linear-gradient(120deg, ${g.project.color}, ${g.project.color}AA)` }}>
-              <span className="text-xs font-semibold text-white">{g.project.name}</span>
-              <span className="text-xs text-white/70">· {g.items.length} tâche{g.items.length !== 1 ? 's' : ''}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-white/25 text-white">{g.project.status === 'termine' ? 'Terminé' : 'En cours'}</span>
-              {isProjectLate(g.project) && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-red-500 text-white flex items-center gap-1"><AlertTriangle size={10} /> En retard</span>
-              )}
-              {g.project.responsibleId && (
-                <span className="text-[10px] text-white/80 flex items-center gap-1">Responsable : {members.find(m => m.id === g.project.responsibleId)?.name || '—'}</span>
-              )}
-              {perm.canCreateProject && (
-                <button onClick={() => editProject(g.project)} className="text-white/70 hover:text-white p-0.5" title="Modifier ou supprimer ce projet">
-                  <Pencil size={11} />
-                </button>
-              )}
-              {perm.canCreateTask && (
-                <button onClick={() => newTask(g.project.id)} className="text-white/70 hover:text-white p-0.5" title="Nouvelle tâche dans ce projet">
-                  <Plus size={12} />
-                </button>
-              )}
-              {g.project.externalIds && g.project.externalIds.length > 0 && (
-                <span className="text-[10px] text-white bg-white/25 px-1.5 py-0.5 rounded-full flex items-center gap-1"><Building2 size={10} />{g.project.externalIds.length}</span>
-              )}
-            </div>
-          )}
-          {g.project && g.project.id === '_none' && (
-            <div className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-t-2xl bg-slate-100">
-              <span className="text-xs font-semibold text-slate-500">{g.project.name}</span>
-              <span className="text-xs text-slate-400">· {g.items.length} tâche{g.items.length !== 1 ? 's' : ''}</span>
-            </div>
-          )}
-          <div className="bg-white rounded-b-2xl border border-t-0 border-slate-100 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead><tr className="border-b border-slate-100 text-left text-xs text-slate-400">
-                <th className="px-4 py-2.5 font-medium">Tâche</th><th className="px-4 py-2.5 font-medium">Assignée à</th>
-                <th className="px-4 py-2.5 font-medium">Envergure</th><th className="px-4 py-2.5 font-medium">Priorité</th>
-                <th className="px-4 py-2.5 font-medium">Statut</th><th className="px-4 py-2.5 font-medium">Échéance</th>
-              </tr></thead>
-              <tbody>{g.items.map(t => <Row key={t.id} t={t} />)}</tbody>
-            </table>
-          </div>
-        </div>
-      ))}
+      {grouped ? (
+        serviceBuckets.length === 0 && !noProjectGroup ? (
+          <div className="bg-white rounded-2xl border border-slate-100"><EmptyState icon={Inbox} title="Aucune tâche" subtitle="Créez une tâche ou ajustez les filtres." /></div>
+        ) : (
+          <>
+            {serviceBuckets.map(b => (
+              <div key={b.service || '_sans_service'} className="mb-6">
+                <div className="flex items-center gap-2 mb-2 px-1">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: b.service ? SERVICE_COLORS[b.service] : '#94A3B8' }} />
+                  <span className="text-xs font-bold uppercase tracking-wide shrink-0" style={{ color: b.service ? SERVICE_COLORS[b.service] : '#94A3B8' }}>{b.service || 'Sans service'}</span>
+                  <span className="h-px flex-1" style={{ background: `linear-gradient(90deg, ${b.service ? SERVICE_COLORS[b.service] : '#94A3B8'}55, transparent)` }} />
+                </div>
+                {b.groups.map(g => <ProjectGroupBlock key={g.project.id} g={g} />)}
+              </div>
+            ))}
+            {noProjectGroup && <ProjectGroupBlock g={noProjectGroup} />}
+          </>
+        )
+      ) : (
+        projectGroups.length === 0 || projectGroups[0].items.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-slate-100"><EmptyState icon={Inbox} title="Aucune tâche" subtitle="Créez une tâche ou ajustez les filtres." /></div>
+        ) : projectGroups.map(g => <ProjectGroupBlock key={g.project?.id || 'x'} g={g} />)
+      )}
     </div>
   );
 }

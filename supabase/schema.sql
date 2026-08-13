@@ -23,6 +23,7 @@ create table if not exists projects (
   name text not null,
   description text,
   color text,
+  service text,
   team_ids jsonb not null default '[]'::jsonb,
   external_ids jsonb not null default '[]'::jsonb,
   start_date date,

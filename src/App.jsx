@@ -265,6 +265,7 @@ const ROW_MAPPERS = {
       priority: t.priority, importance: t.importance, scope: t.scope, status: t.status,
       start_date: d(t.startDate), deadline: d(t.deadline), time: t.time || null,
       repeat_unit: t.repeatUnit, repeat_every: t.repeatEvery, avoid_days: t.avoidDays || [],
+      rotate_assignee: !!t.rotateAssignee,
       is_governance: !!t.isGovernance, governance_type: t.governanceType || null, created_at: d(t.createdAt),
     }),
     fromRow: (r) => ({
@@ -273,6 +274,7 @@ const ROW_MAPPERS = {
       priority: r.priority, importance: r.importance, scope: r.scope, status: r.status,
       startDate: r.start_date || '', deadline: r.deadline || '', time: r.time || '',
       repeatUnit: r.repeat_unit, repeatEvery: r.repeat_every, avoidDays: r.avoid_days || [],
+      rotateAssignee: !!r.rotate_assignee,
       isGovernance: !!r.is_governance, governanceType: r.governance_type || undefined, createdAt: r.created_at || '',
     }),
   },
@@ -824,6 +826,12 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
         </div>
         {form.repeatUnit && form.repeatUnit !== 'aucune' && (
           <div className="text-xs text-slate-400 mt-1.5 flex items-center gap-1"><Repeat size={11} /> {repeatLabel(form.repeatUnit, form.repeatEvery)} — nouvelle occurrence créée automatiquement une fois "Terminé".</div>
+        )}
+        {form.repeatUnit && form.repeatUnit !== 'aucune' && form.assignMode === 'individuel' && projectTeamIds.length > 0 && (
+          <label className="flex items-center gap-2 text-xs text-slate-600 mt-2.5">
+            <input disabled={locked} type="checkbox" checked={!!form.rotateAssignee} onChange={e => setForm({ ...form, rotateAssignee: e.target.checked })} />
+            Le responsable change à chaque récurrence (tourne dans l'équipe du projet)
+          </label>
         )}
         {form.repeatUnit && form.repeatUnit !== 'aucune' && (
           <div className="mt-2.5">
@@ -2239,6 +2247,13 @@ function ReferentApp({ session, onSignOut }) {
     });
   };
 
+  const nextRotatedAssignee = (t) => {
+    const team = projects.find(p => p.id === t.projectId)?.teamIds || [];
+    if (team.length === 0) return t.assigneeId;
+    const idx = team.indexOf(t.assigneeId);
+    return team[(idx + 1) % team.length];
+  };
+
   const saveTask = async (t) => {
     const existing = tasks.find(x => x.id === t.id);
     const justCompleted = existing && existing.status !== 'termine' && t.status === 'termine';
@@ -2255,6 +2270,7 @@ function ReferentApp({ session, onSignOut }) {
         guard++;
       }
       const clone = { ...t, id: uid(), status: 'a_faire', createdAt: todayISO(), startDate: nextStart, deadline: nextDeadline };
+      if (t.rotateAssignee && t.assignMode === 'individuel') clone.assigneeId = nextRotatedAssignee(t);
       setTasks(prev => [...prev, clone]);
       warnIfFailed(await upsertRow('tasks', clone), 'La prochaine occurrence');
     }

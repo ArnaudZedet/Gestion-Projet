@@ -6,7 +6,7 @@ import {
   Search, Loader2, Inbox, GanttChartSquare, Grid3x3, MapPin, Lock, Target, Repeat,
   ClipboardList, Send, XCircle, Building2, Mail, Check,
   Flag, PlayCircle, ShieldAlert, GraduationCap, Milestone as MilestoneIcon, Megaphone, ClipboardCheck,
-  ChevronLeft, ChevronRight, FolderPlus, List as ListIcon, Download, Copy, Upload
+  ChevronLeft, ChevronRight, FolderPlus, List as ListIcon, Download, Copy, Upload, MessageSquare
 } from 'lucide-react';
 
 /* ---------------------------------------------------------------------- */
@@ -383,9 +383,11 @@ function responsibleIdsOf(t) {
   if (t.assigneeId) return [t.assigneeId];
   return [];
 }
-function myProjectIds(memberId, tasks, projects) {
+// Un projet n'est "à moi" que si j'en suis membre déclaré de l'équipe —
+// être simplement tagué sur une tâche isolée (RACI, pool...) ne suffit
+// plus à rendre tout le projet, ni ses autres tâches, visibles.
+function myProjectIds(memberId, projects) {
   const ids = new Set();
-  tasks.forEach(t => { if (t.projectId && isTaskOfMine(t, memberId)) ids.add(t.projectId); });
   projects.forEach(p => { if ((p.teamIds || []).includes(memberId)) ids.add(p.id); });
   return ids;
 }
@@ -888,7 +890,7 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 
 function ProjectModal({ project, members, externalContacts, tasks, currentMemberId, onSave, onDelete, onClose }) {
   const isNew = !project;
-  const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: [], externalIds: [], startDate: '', endDate: '', status: 'en_cours' });
+  const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours' });
   const [genGovernance, setGenGovernance] = useState(false);
   const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
   const toggleExternal = (id) => setForm(f => ({ ...f, externalIds: (f.externalIds || []).includes(id) ? f.externalIds.filter(x => x !== id) : [...(f.externalIds || []), id] }));
@@ -953,10 +955,10 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
         </div>
       </Field>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Début du projet (optionnel)"><input type="date" min={todayISO()} className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} /></Field>
-        <Field label="Fin du projet (optionnel)"><input type="date" min={form.startDate || todayISO()} className={inputCls} value={form.endDate || ''} onChange={e => setForm({ ...form, endDate: e.target.value })} /></Field>
+        <Field label="Début du projet"><input type="date" min={form.id ? undefined : todayISO()} className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} /></Field>
+        <Field label="Fin du projet"><input type="date" min={form.startDate || undefined} className={inputCls} value={form.endDate || ''} onChange={e => setForm({ ...form, endDate: e.target.value })} /></Field>
       </div>
-      <div className="text-xs text-slate-400 -mt-2.5 mb-3.5">Une fois les deux dates renseignées, elles deviennent le calendrier du projet : les tâches créées dedans ne pourront pas avoir de date en dehors.</div>
+      <div className="text-xs text-slate-400 -mt-2.5 mb-3.5">Ces deux dates forment le calendrier du projet : les tâches créées dedans ne pourront pas avoir de date en dehors.</div>
       {isNew && (
         <div className="bg-slate-50 rounded-xl p-3.5 mb-3.5">
           <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
@@ -978,7 +980,7 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
             if (window.confirm(msg)) onDelete(project.id);
           }} className="text-red-500 hover:bg-red-50 text-sm font-medium px-3 py-2 rounded-lg flex items-center gap-1.5"><Trash2 size={14} /> Supprimer</button>
         ) : <span />}
-        <button disabled={!form.name.trim()} onClick={handleSubmit} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
+        <button disabled={!form.name.trim() || !form.startDate || !form.endDate} onClick={handleSubmit} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
           {project ? 'Enregistrer' : 'Créer le projet'}
         </button>
       </div>
@@ -1365,10 +1367,10 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
   const [query, setQuery] = useState('');
   const selectCls = "border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 bg-white focus:outline-none";
 
+  // tasks/projects arrivent déjà bornés à l'équipe de l'utilisateur pour les non-managers
+  // (voir scopedTasks/scopedProjects dans ReferentApp) : pas besoin de refiltrer par équipe ici.
   const baseList = scope === 'mine'
-    ? (perm.isReferent
-        ? tasks.filter(t => isTaskOfMine(t, currentMemberId) || myProjectIds(currentMemberId, tasks, projects).has(t.projectId))
-        : tasks.filter(t => isTaskOfMine(t, currentMemberId)))
+    ? (perm.isReferent ? tasks : tasks.filter(t => isTaskOfMine(t, currentMemberId)))
     : tasks;
 
   const filtered = baseList.filter(t =>
@@ -1378,9 +1380,7 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
     t.title.toLowerCase().includes(query.toLowerCase())
   );
 
-  const visibleProjects = scope === 'mine' && !perm.isManager
-    ? projects.filter(p => myProjectIds(currentMemberId, tasks, projects).has(p.id))
-    : projects;
+  const visibleProjects = projects;
 
   const grouped = filterProject === 'all';
   const groups = grouped
@@ -1952,6 +1952,44 @@ function PrioritisationView({ tasks, members, openTask }) {
 }
 
 /* ---------------------------------------------------------------------- */
+/*  Commentaires & suggestions                                            */
+/* ---------------------------------------------------------------------- */
+
+function FeedbackView({ currentMember, onSend }) {
+  const [message, setMessage] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  const handleSend = async () => {
+    if (!message.trim()) return;
+    setSending(true);
+    const ok = await onSend(message.trim());
+    setSending(false);
+    if (ok) { setSent(true); setMessage(''); } else {
+      window.alert("⚠️ Le message n'a pas pu être envoyé (problème de connexion). Réessayez dans un instant.");
+    }
+  };
+
+  return (
+    <div className="max-w-xl">
+      <div className="bg-white rounded-2xl border border-slate-100 p-5">
+        <div className="text-sm font-semibold text-slate-700 mb-1">Une idée, un bug, une suggestion ?</div>
+        <div className="text-xs text-slate-400 mb-3.5">Votre message part par email au(x) manager(s) de l'application, avec votre nom.</div>
+        <textarea className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-teal-300" rows={6}
+          placeholder="Décrivez votre idée ou le problème rencontré…" value={message} onChange={e => setMessage(e.target.value)} />
+        <div className="flex items-center justify-between mt-3.5">
+          {sent ? <span className="text-xs text-emerald-600 font-medium flex items-center gap-1.5"><Check size={14} /> Message envoyé, merci !</span> : <span />}
+          <button disabled={!message.trim() || sending} onClick={handleSend}
+            className="bg-teal-600 disabled:opacity-40 hover:bg-teal-700 text-white text-sm font-medium px-4 py-2 rounded-lg flex items-center gap-1.5">
+            <Send size={14} /> {sending ? 'Envoi…' : 'Envoyer'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
 /*  Navigation par rôle                                                   */
 /* ---------------------------------------------------------------------- */
 
@@ -1963,12 +2001,13 @@ function navFor(perm) {
   if (perm.isReferent) {
     nav.push({ id: 'gantt', label: 'Durée des projets', Icon: GanttChartSquare, accent: '#A78BFA' });
     nav.push({ id: 'raci', label: 'Rôle des participants', Icon: Grid3x3, accent: '#2DD4BF' });
-    nav.push({ id: 'priorisation', label: 'Priorisation', Icon: Target, accent: '#FB923C' });
   }
   if (perm.isManager) {
+    nav.push({ id: 'priorisation', label: 'Priorisation', Icon: Target, accent: '#FB923C' });
     nav.push({ id: 'team', label: 'Équipe et référents', Icon: Users, accent: '#F472B6' });
     nav.push({ id: 'contacts', label: 'Contacts externes', Icon: Building2, accent: '#C084FC' });
   }
+  nav.push({ id: 'feedback', label: 'Commentaires & suggestions', Icon: MessageSquare, accent: '#14B8A6' });
   return nav;
 }
 
@@ -2018,6 +2057,12 @@ function ReferentApp({ session, onSignOut }) {
   const perm = permissionsFor(currentMember?.accessLevel || 'utilisateur');
   const nav = navFor(perm);
 
+  // Portée équipe : un non-manager ne voit que les projets dont il est membre déclaré,
+  // et — pour les tâches sans projet — celles qui lui sont personnellement assignées.
+  const myTeamProjectIds = perm.isManager ? null : myProjectIds(connectedAs, projects);
+  const scopedProjects = perm.isManager ? projects : projects.filter(p => myTeamProjectIds.has(p.id));
+  const scopedTasks = perm.isManager ? tasks : tasks.filter(t => t.projectId ? myTeamProjectIds.has(t.projectId) : isTaskOfMine(t, connectedAs));
+
   // Invitation Supabase (email + mot de passe) déclenchée dès qu'un manager
   // saisit/modifie l'email d'un collaborateur — plus besoin de le refaire à
   // la main dans le dashboard Supabase.
@@ -2047,6 +2092,23 @@ function ReferentApp({ session, onSignOut }) {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
       body: JSON.stringify({ to: recipients, subject, html }),
     }).catch((e) => console.error('Notification email non envoyée', e));
+  };
+
+  const sendFeedback = async (message) => {
+    const managerEmails = members.filter(m => m.accessLevel === 'manager' && m.email).map(m => m.email);
+    if (!managerEmails.length) return false;
+    try {
+      const res = await fetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          to: managerEmails,
+          subject: `Suggestion de ${currentMember?.name || myEmail}`,
+          html: `<p><strong>${currentMember?.name || myEmail}</strong> (${myEmail}) a laissé un commentaire :</p><p>${message.replace(/\n/g, '<br/>')}</p>`,
+        }),
+      });
+      return res.ok;
+    } catch { return false; }
   };
 
   const PROJECT_STATUS_LABELS = { en_cours: 'En cours', termine: 'Terminé' };
@@ -2380,17 +2442,14 @@ function ReferentApp({ session, onSignOut }) {
 
         <div className="flex-1 overflow-y-auto p-6">
           {view === 'dashboard' && <Dashboard tasks={tasks} members={members} projects={projects} appointments={appointments} connectedAs={connectedAs} openTask={(t) => setTaskModal({ task: t })} onClaim={claimTask} onOpenProject={(p) => setProjectModal({ project: p })} />}
-          {view === 'tasks' && <TasksView tasks={tasks} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={(projectId) => setTaskModal({ task: null, presetProjectId: projectId })} newProject={() => setProjectModal({ project: null })} editProject={(p) => setProjectModal({ project: p })} />}
-          {view === 'planning' && <PlanningView members={members} tasks={tasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
-          {view === 'gantt' && <GanttView tasks={tasks} members={members}
-            projects={perm.isManager ? projects : projects.filter(p => myProjectIds(connectedAs, tasks, projects).has(p.id))}
-            openTask={(t) => setTaskModal({ task: t })} />}
-          {view === 'raci' && <RaciView tasks={tasks} members={members} perm={perm}
-            projects={perm.isManager ? projects : projects.filter(p => myProjectIds(connectedAs, tasks, projects).has(p.id))}
-            updateRaci={updateRaci} />}
-          {view === 'priorisation' && <PrioritisationView tasks={perm.isManager ? tasks : tasks.filter(t => myProjectIds(connectedAs, tasks, projects).has(t.projectId) || isTaskOfMine(t, connectedAs))} members={members} openTask={(t) => setTaskModal({ task: t })} />}
+          {view === 'tasks' && <TasksView tasks={scopedTasks} members={members} projects={scopedProjects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={(projectId) => setTaskModal({ task: null, presetProjectId: projectId })} newProject={() => setProjectModal({ project: null })} editProject={(p) => setProjectModal({ project: p })} />}
+          {view === 'planning' && <PlanningView members={members} tasks={scopedTasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
+          {view === 'gantt' && <GanttView tasks={scopedTasks} members={members} projects={scopedProjects} openTask={(t) => setTaskModal({ task: t })} />}
+          {view === 'raci' && <RaciView tasks={scopedTasks} members={members} perm={perm} projects={scopedProjects} updateRaci={updateRaci} />}
+          {view === 'priorisation' && <PrioritisationView tasks={tasks} members={members} openTask={(t) => setTaskModal({ task: t })} />}
           {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} onImport={importMembers} />}
           {view === 'contacts' && <ContactsView contacts={externalContacts} perm={perm} editContact={(c) => setContactModal({ contact: c })} newContact={() => setContactModal({ contact: null })} />}
+          {view === 'feedback' && <FeedbackView currentMember={currentMember} onSend={sendFeedback} />}
         </div>
       </div>
 

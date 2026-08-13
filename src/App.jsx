@@ -2550,7 +2550,7 @@ function ReferentApp({ session, onSignOut }) {
     const datesOrStatusChanged = exists && (prevProject.endDate !== projectObjInput.endDate || prevProject.status !== projectObjInput.status);
     const projectObj = datesOrStatusChanged ? { ...projectObjInput, lateNotifiedAt: null } : projectObjInput;
     setProjects(prev => exists ? prev.map(p => p.id === projectObj.id ? projectObj : p) : [...prev, projectObj]);
-    upsertRow('projects', projectObj);
+    warnIfFailed(await upsertRow('projects', projectObj), 'Le projet');
     if (governanceTasks && governanceTasks.length) {
       setTasks(prev => [...prev, ...governanceTasks]);
       insertRows('tasks', governanceTasks);

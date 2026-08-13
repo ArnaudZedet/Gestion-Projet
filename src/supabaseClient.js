@@ -10,4 +10,11 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Flux "implicite" plutôt que PKCE (le défaut) : les liens d'invitation et de
+// réinitialisation sont envoyés par email et ouverts dans un navigateur qui
+// n'a jamais initié la demande (l'invitation part du serveur, pas du
+// navigateur de la personne invitée) — PKCE exigerait une correspondance de
+// code que ce navigateur n'a jamais eue, et échouerait silencieusement.
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { flowType: 'implicit' },
+});

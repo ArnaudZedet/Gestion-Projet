@@ -58,6 +58,7 @@ const isImportant = (t) => t.importance === 'critique' || t.importance === 'elev
 
 const PROJECT_COLORS = ['#2563EB', '#0D9488', '#B54708', '#7C3AED', '#B42318', '#0369A1', '#4D7C0F'];
 const FUNCTIONS = ['Manipulateur', 'Secrétaire', 'Aide manipulateur', 'Médecin'];
+const SERVICES = ['Radio', 'Scanner', 'IRM'];
 
 // Analyse simple d'un fichier CSV (gère , et ; comme séparateur, et les guillemets)
 function parseCSV(text) {
@@ -248,8 +249,8 @@ const d = (v) => (v ? v : null); // '' -> null pour les colonnes date
 const ROW_MAPPERS = {
   members: {
     table: 'members',
-    toRow: (m) => ({ id: m.id, name: m.name, role: m.role || null, email: m.email || null, access_level: m.accessLevel, external: !!m.external }),
-    fromRow: (r) => ({ id: r.id, name: r.name, role: r.role || '', email: r.email || '', accessLevel: r.access_level, external: !!r.external }),
+    toRow: (m) => ({ id: m.id, name: m.name, role: m.role || null, service: m.service || null, email: m.email || null, access_level: m.accessLevel, external: !!m.external }),
+    fromRow: (r) => ({ id: r.id, name: r.name, role: r.role || '', service: r.service || '', email: r.email || '', accessLevel: r.access_level, external: !!r.external }),
   },
   projects: {
     table: 'projects',
@@ -630,6 +631,20 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
     return { ...f, raci };
   });
   const clearAllParticipants = () => setForm(f => f.assignMode === 'pool' ? { ...f, pool: [] } : { ...f, raci: {} });
+  const poolGroups = [
+    ...SERVICES.map(s => ({ label: s, ids: availableMembers.filter(m => m.service === s).map(m => m.id) })),
+    ...FUNCTIONS.map(fn => ({ label: fn, ids: availableMembers.filter(m => m.role === fn).map(m => m.id) })),
+  ].filter(g => g.ids.length > 0);
+  const togglePoolParticipant = (ids) => setForm(f => {
+    if (f.assignMode === 'pool') {
+      const allIn = ids.every(id => f.pool.includes(id));
+      return { ...f, pool: allIn ? f.pool.filter(id => !ids.includes(id)) : Array.from(new Set([...f.pool, ...ids])) };
+    }
+    const raci = { ...f.raci };
+    const allIn = ids.every(id => raci[id]);
+    if (allIn) ids.forEach(id => delete raci[id]); else ids.forEach(id => { if (!raci[id]) raci[id] = 'I'; });
+    return { ...f, raci };
+  });
   const setRaciRole = (id, role) => setForm(f => {
     const raci = { ...f.raci };
     if (role) raci[id] = role; else delete raci[id];
@@ -682,10 +697,23 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
 
       {form.assignMode === 'pool' && (
         <Field label="Candidats (le premier qui la prend l'obtient)">
-          <div className="flex items-center justify-end gap-2 mb-1.5">
-            <button type="button" disabled={locked} onClick={selectAllParticipants} className="text-xs text-blue-600 hover:underline">Tout cocher</button>
-            <span className="text-slate-300">·</span>
-            <button type="button" disabled={locked} onClick={clearAllParticipants} className="text-xs text-slate-400 hover:underline">Tout décocher</button>
+          <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+            <div className="flex flex-wrap gap-1.5">
+              {poolGroups.map(g => {
+                const allIn = g.ids.every(id => form.pool.includes(id));
+                return (
+                  <button key={g.label} type="button" disabled={locked} onClick={() => togglePoolParticipant(g.ids)}
+                    className={`text-xs px-2 py-1 rounded-full border font-medium ${allIn ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
+                    Tout {g.label} ({g.ids.length})
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button type="button" disabled={locked} onClick={selectAllParticipants} className="text-xs text-blue-600 hover:underline">Tout cocher</button>
+              <span className="text-slate-300">·</span>
+              <button type="button" disabled={locked} onClick={clearAllParticipants} className="text-xs text-slate-400 hover:underline">Tout décocher</button>
+            </div>
           </div>
           <div className="flex flex-wrap gap-1.5">
             {availableMembers.map(m => {
@@ -704,10 +732,23 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
 
       {form.assignMode === 'equipe' && (
         <Field label="Participants et rôle de chacun (R/A/C/I)">
-          <div className="flex items-center justify-end gap-2 mb-1.5">
-            <button type="button" disabled={locked} onClick={selectAllParticipants} className="text-xs text-blue-600 hover:underline">Tout cocher</button>
-            <span className="text-slate-300">·</span>
-            <button type="button" disabled={locked} onClick={clearAllParticipants} className="text-xs text-slate-400 hover:underline">Tout décocher</button>
+          <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+            <div className="flex flex-wrap gap-1.5">
+              {poolGroups.map(g => {
+                const allIn = g.ids.every(id => !!form.raci[id]);
+                return (
+                  <button key={g.label} type="button" disabled={locked} onClick={() => togglePoolParticipant(g.ids)}
+                    className={`text-xs px-2 py-1 rounded-full border font-medium ${allIn ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
+                    Tout {g.label} ({g.ids.length})
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button type="button" disabled={locked} onClick={selectAllParticipants} className="text-xs text-blue-600 hover:underline">Tout cocher</button>
+              <span className="text-slate-300">·</span>
+              <button type="button" disabled={locked} onClick={clearAllParticipants} className="text-xs text-slate-400 hover:underline">Tout décocher</button>
+            </div>
           </div>
           <div className="space-y-1.5">
             {availableMembers.map(m => {
@@ -844,7 +885,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
 /* ---------------------------------------------------------------------- */
 
 function MemberModal({ member, onSave, onDelete, onClose }) {
-  const [form, setForm] = useState(member || { name: '', role: '', accessLevel: 'utilisateur', email: '' });
+  const [form, setForm] = useState(member || { name: '', role: '', service: '', accessLevel: 'utilisateur', email: '' });
   const [roleChoice, setRoleChoice] = useState(FUNCTIONS.includes(member?.role) ? member.role : (member?.role ? 'Autre' : ''));
   return (
     <Modal title={member ? 'Modifier le collaborateur' : 'Nouveau collaborateur'} onClose={onClose}>
@@ -864,8 +905,14 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
             <input className={`${inputCls} mt-2`} value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} placeholder="Préciser la fonction" />
           )}
         </Field>
-        <Field label="Email (compte de connexion)"><input type="email" className={inputCls} value={form.email || ''} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="prenom.nom@cabinet.fr" /></Field>
+        <Field label="Service">
+          <select className={inputCls} value={form.service || ''} onChange={e => setForm({ ...form, service: e.target.value })}>
+            <option value="">— aucun —</option>
+            {SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </Field>
       </div>
+      <Field label="Email (compte de connexion)"><input type="email" className={inputCls} value={form.email || ''} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="prenom.nom@cabinet.fr" /></Field>
       <Field label="Rôle applicatif (droits d'accès)">
         <select className={inputCls} value={form.accessLevel} onChange={e => setForm({ ...form, accessLevel: e.target.value })}>
           {ACCESS_LEVELS.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
@@ -893,6 +940,14 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
   const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours' });
   const [genGovernance, setGenGovernance] = useState(false);
   const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
+  const poolGroups = [
+    ...SERVICES.map(s => ({ label: s, ids: members.filter(m => m.service === s).map(m => m.id) })),
+    ...FUNCTIONS.map(f => ({ label: f, ids: members.filter(m => m.role === f).map(m => m.id) })),
+  ].filter(g => g.ids.length > 0);
+  const togglePool = (ids) => setForm(f => {
+    const allIn = ids.every(id => f.teamIds.includes(id));
+    return { ...f, teamIds: allIn ? f.teamIds.filter(id => !ids.includes(id)) : Array.from(new Set([...f.teamIds, ...ids])) };
+  });
   const toggleExternal = (id) => setForm(f => ({ ...f, externalIds: (f.externalIds || []).includes(id) ? f.externalIds.filter(x => x !== id) : [...(f.externalIds || []), id] }));
 
   const handleSubmit = () => {
@@ -922,6 +977,19 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
         </div>
       </Field>
       <Field label="Équipe affectée">
+        {poolGroups.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {poolGroups.map(g => {
+              const allIn = g.ids.every(id => form.teamIds.includes(id));
+              return (
+                <button key={g.label} type="button" onClick={() => togglePool(g.ids)}
+                  className={`text-xs px-2.5 py-1 rounded-full border font-medium flex items-center gap-1 ${allIn ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
+                  <Users size={11} /> Tout {g.label} ({g.ids.length})
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div className="flex flex-wrap gap-1.5">
           {members.map(m => {
             const active = form.teamIds.includes(m.id);
@@ -1526,7 +1594,7 @@ function TeamView({ members, tasks, perm, editMember, newMember, onImport }) {
           return (
             <div key={m.id} className="bg-white rounded-2xl border border-slate-100 p-4">
               <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3"><Avatar name={m.name} size={40} /><div><div className="font-medium text-slate-700 text-sm">{m.name}</div><div className="text-xs text-slate-400">{m.role}</div></div></div>
+                <div className="flex items-center gap-3"><Avatar name={m.name} size={40} /><div><div className="font-medium text-slate-700 text-sm">{m.name}</div><div className="text-xs text-slate-400">{m.role}{m.service ? ` · ${m.service}` : ''}</div></div></div>
                 {perm.canManageTeam && <button onClick={() => editMember(m)} className="text-slate-300 hover:text-slate-500 p-1"><Pencil size={14} /></button>}
               </div>
               <div className="flex items-center gap-2 mt-3 flex-wrap"><RoleTag id={m.accessLevel} />{m.email && <span className="text-xs text-slate-400 flex items-center gap-1"><Mail size={11} />{m.email}</span>}</div>

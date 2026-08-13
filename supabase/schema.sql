@@ -11,7 +11,7 @@ create table if not exists members (
   id text primary key,
   name text not null,
   role text,
-  service text,
+  services jsonb not null default '[]'::jsonb,
   email text,
   access_level text not null default 'utilisateur',
   external boolean not null default false,

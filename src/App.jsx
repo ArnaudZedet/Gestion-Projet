@@ -249,8 +249,8 @@ const d = (v) => (v ? v : null); // '' -> null pour les colonnes date
 const ROW_MAPPERS = {
   members: {
     table: 'members',
-    toRow: (m) => ({ id: m.id, name: m.name, role: m.role || null, service: m.service || null, email: m.email || null, access_level: m.accessLevel, external: !!m.external }),
-    fromRow: (r) => ({ id: r.id, name: r.name, role: r.role || '', service: r.service || '', email: r.email || '', accessLevel: r.access_level, external: !!r.external }),
+    toRow: (m) => ({ id: m.id, name: m.name, role: m.role || null, services: m.services || [], email: m.email || null, access_level: m.accessLevel, external: !!m.external }),
+    fromRow: (r) => ({ id: r.id, name: r.name, role: r.role || '', services: r.services || [], email: r.email || '', accessLevel: r.access_level, external: !!r.external }),
   },
   projects: {
     table: 'projects',
@@ -632,7 +632,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
   });
   const clearAllParticipants = () => setForm(f => f.assignMode === 'pool' ? { ...f, pool: [] } : { ...f, raci: {} });
   const poolGroups = [
-    ...SERVICES.map(s => ({ label: s, ids: availableMembers.filter(m => m.service === s).map(m => m.id) })),
+    ...SERVICES.map(s => ({ label: s, ids: availableMembers.filter(m => (m.services || []).includes(s)).map(m => m.id) })),
     ...FUNCTIONS.map(fn => ({ label: fn, ids: availableMembers.filter(m => m.role === fn).map(m => m.id) })),
   ];
   const togglePoolParticipant = (ids) => setForm(f => {
@@ -887,8 +887,9 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
 /* ---------------------------------------------------------------------- */
 
 function MemberModal({ member, onSave, onDelete, onClose }) {
-  const [form, setForm] = useState(member || { name: '', role: '', service: '', accessLevel: 'utilisateur', email: '' });
+  const [form, setForm] = useState(member || { name: '', role: '', services: [], accessLevel: 'utilisateur', email: '' });
   const [roleChoice, setRoleChoice] = useState(FUNCTIONS.includes(member?.role) ? member.role : (member?.role ? 'Autre' : ''));
+  const toggleService = (s) => setForm(f => ({ ...f, services: (f.services || []).includes(s) ? f.services.filter(x => x !== s) : [...(f.services || []), s] }));
   return (
     <Modal title={member ? 'Modifier le collaborateur' : 'Nouveau collaborateur'} onClose={onClose}>
       <Field label="Nom"><input className={inputCls} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Prénom Nom" /></Field>
@@ -907,11 +908,18 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
             <input className={`${inputCls} mt-2`} value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} placeholder="Préciser la fonction" />
           )}
         </Field>
-        <Field label="Service">
-          <select className={inputCls} value={form.service || ''} onChange={e => setForm({ ...form, service: e.target.value })}>
-            <option value="">— aucun —</option>
-            {SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
+        <Field label="Service(s)">
+          <div className="flex flex-wrap gap-1.5">
+            {SERVICES.map(s => {
+              const active = (form.services || []).includes(s);
+              return (
+                <button key={s} type="button" onClick={() => toggleService(s)}
+                  className={`text-xs px-2.5 py-1.5 rounded-full border font-medium ${active ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-500'}`}>
+                  {s}
+                </button>
+              );
+            })}
+          </div>
         </Field>
       </div>
       <Field label="Email (compte de connexion)"><input type="email" className={inputCls} value={form.email || ''} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="prenom.nom@cabinet.fr" /></Field>
@@ -943,7 +951,7 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
   const [genGovernance, setGenGovernance] = useState(false);
   const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
   const poolGroups = [
-    ...SERVICES.map(s => ({ label: s, ids: members.filter(m => m.service === s).map(m => m.id) })),
+    ...SERVICES.map(s => ({ label: s, ids: members.filter(m => (m.services || []).includes(s)).map(m => m.id) })),
     ...FUNCTIONS.map(f => ({ label: f, ids: members.filter(m => m.role === f).map(m => m.id) })),
   ];
   const togglePool = (ids) => setForm(f => {
@@ -1597,7 +1605,7 @@ function TeamView({ members, tasks, perm, editMember, newMember, onImport }) {
           return (
             <div key={m.id} className="bg-white rounded-2xl border border-slate-100 p-4">
               <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3"><Avatar name={m.name} size={40} /><div><div className="font-medium text-slate-700 text-sm">{m.name}</div><div className="text-xs text-slate-400">{m.role}{m.service ? ` · ${m.service}` : ''}</div></div></div>
+                <div className="flex items-center gap-3"><Avatar name={m.name} size={40} /><div><div className="font-medium text-slate-700 text-sm">{m.name}</div><div className="text-xs text-slate-400">{m.role}{(m.services || []).length > 0 ? ` · ${m.services.join(', ')}` : ''}</div></div></div>
                 {perm.canManageTeam && <button onClick={() => editMember(m)} className="text-slate-300 hover:text-slate-500 p-1"><Pencil size={14} /></button>}
               </div>
               <div className="flex items-center gap-2 mt-3 flex-wrap"><RoleTag id={m.accessLevel} />{m.email && <span className="text-xs text-slate-400 flex items-center gap-1"><Mail size={11} />{m.email}</span>}</div>

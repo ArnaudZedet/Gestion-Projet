@@ -2663,9 +2663,43 @@ function SetPasswordForm({ onDone }) {
 // (?code=...&type=... — flux PKCE, par défaut sur les projets Supabase récents).
 const isInviteOrRecoveryLink = () => /type=(invite|recovery)/.test(window.location.hash) || /type=(invite|recovery)/.test(window.location.search);
 
+// Certains antivirus / scanners de messagerie d'entreprise "pré-visitent"
+// automatiquement les liens contenus dans les emails avant que la personne
+// ne clique elle-même — ce qui consomme le lien à usage unique de Supabase
+// et le rend mort pour la vraie personne. Pour éviter ça, le lien envoyé par
+// email ne doit pas valider tout seul : il amène sur cet écran, qui exige un
+// vrai clic humain avant d'échanger le jeton (un scanner automatique charge
+// la page mais ne clique jamais sur un bouton).
+function ConfirmLinkScreen({ type, tokenHash, onVerified }) {
+  const [error, setError] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const handleConfirm = async () => {
+    setVerifying(true); setError('');
+    const { error: err } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
+    setVerifying(false);
+    if (err) setError("Ce lien a expiré ou a déjà été utilisé. Redemandez une invitation, ou cliquez sur \"Mot de passe oublié\" pour en obtenir un nouveau.");
+    else { window.history.replaceState(null, '', window.location.pathname); onVerified(); }
+  };
+  return (
+    <AuthShell>
+      <div className="text-sm text-slate-600 mb-4">
+        {type === 'recovery'
+          ? 'Cliquez pour continuer la réinitialisation de votre mot de passe.'
+          : 'Cliquez pour activer votre compte et choisir votre mot de passe.'}
+      </div>
+      {error && <div className="text-xs text-red-500 mb-3">{error}</div>}
+      <button onClick={handleConfirm} disabled={verifying} className={authButtonCls}>{verifying ? 'Vérification…' : 'Continuer'}</button>
+    </AuthShell>
+  );
+}
+
 export default function AuthGate() {
   const [session, setSession] = useState(undefined);
   const [needsPassword, setNeedsPassword] = useState(() => isInviteOrRecoveryLink());
+  const linkParams = new URLSearchParams(window.location.search);
+  const tokenHash = linkParams.get('token_hash');
+  const linkType = linkParams.get('type');
+  const [linkConfirmed, setLinkConfirmed] = useState(!tokenHash);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -2679,6 +2713,9 @@ export default function AuthGate() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
+  if (tokenHash && linkType && !linkConfirmed) {
+    return <ConfirmLinkScreen type={linkType} tokenHash={tokenHash} onVerified={() => { setLinkConfirmed(true); setNeedsPassword(true); }} />;
+  }
   if (session === undefined) return <div className="min-h-screen flex items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2" size={18} /> Chargement…</div>;
   if (!session) return <Login />;
   if (needsPassword) return <SetPasswordForm onDone={() => setNeedsPassword(false)} />;

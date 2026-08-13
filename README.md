@@ -39,23 +39,36 @@ n'importe qui sur internet) :
 2. Désactivez **"Allow new users to sign up"** (ou "Enable email signup" selon la version).
 3. Sauvegardez.
 
-## 3bis. Le premier email d'invitation contient un lien d'activation
+## 3bis. Personnaliser les modèles d'email (obligatoire)
 
-L'application utilise maintenant une connexion classique **email + mot de
-passe**. Le modèle d'email **Invite user** (Authentication → Emails → Invite
-user) doit contenir le lien d'activation par défaut de Supabase :
+⚠️ Contrairement au modèle par défaut de Supabase, **il faut personnaliser
+ces deux modèles** — sinon les liens envoyés aux adresses professionnelles
+protégées par un antivirus/scanner de messagerie (Outlook Safe Links,
+Proofpoint, etc.) risquent d'être "pré-visités" automatiquement par ce
+scanner avant que la personne ne clique elle-même, ce qui consomme le lien à
+usage unique et le rend mort pour la vraie personne (symptôme : elle
+retombe sur l'écran de connexion classique au lieu de "Choisissez votre mot
+de passe"). La parade : le lien de l'email n'active plus rien tout seul, il
+amène sur un écran "Continuer" dans l'app qui exige un vrai clic humain — un
+scanner automatique charge la page mais ne clique jamais sur un bouton.
 
-```html
-<p>Cliquez ici pour activer votre compte : {{ .ConfirmationURL }}</p>
-```
+1. Menu **Authentication** → **Emails** → **Invite user**. Remplacez le
+   contenu par :
+   ```html
+   <p>Cliquez ici pour activer votre compte : {{ .SiteURL }}/?token_hash={{ .TokenHash }}&type=invite</p>
+   ```
+2. Toujours dans **Emails** → **Reset Password**. Remplacez le contenu par :
+   ```html
+   <p>Cliquez ici pour réinitialiser votre mot de passe : {{ .SiteURL }}/?token_hash={{ .TokenHash }}&type=recovery</p>
+   ```
+3. Vérifiez que **Authentication → URL Configuration → Site URL** correspond
+   bien à l'URL Vercel de votre application (c'est cette valeur qu'utilise
+   `{{ .SiteURL }}` dans les modèles ci-dessus).
 
-C'est le modèle par défaut de Supabase — en principe vous n'avez rien à
-changer ici. En cliquant sur ce lien, la personne arrive directement sur
-l'écran "Choisissez votre mot de passe" de l'application, une seule fois.
-Ensuite, elle se connecte normalement avec son email et ce mot de passe.
-
-Le modèle **Reset Password** (utilisé par "Mot de passe oublié ?") fonctionne
-aussi par défaut, sans réglage supplémentaire.
+En cliquant sur le lien reçu, la personne arrive sur un écran "Continuer" ;
+un clic plus tard, elle atterrit sur "Choisissez votre mot de passe", une
+seule fois. Ensuite, elle se connecte normalement avec son email et ce mot
+de passe.
 
 ## 4. Inviter votre équipe
 

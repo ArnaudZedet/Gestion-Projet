@@ -1555,12 +1555,18 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
   );
 
   const visibleProjects = projects;
+  const byDeadline = (a, b) => {
+    if (!a.deadline && !b.deadline) return 0;
+    if (!a.deadline) return 1;
+    if (!b.deadline) return -1;
+    return a.deadline.localeCompare(b.deadline);
+  };
 
   const grouped = filterProject === 'all';
   const groups = grouped
-    ? visibleProjects.map(p => ({ project: p, items: filtered.filter(t => t.projectId === p.id) })).filter(g => g.items.length > 0)
-    : [{ project: projects.find(p => p.id === filterProject), items: filtered }];
-  const noProject = filtered.filter(t => !projects.some(p => p.id === t.projectId));
+    ? visibleProjects.map(p => ({ project: p, items: filtered.filter(t => t.projectId === p.id).sort(byDeadline) })).filter(g => g.items.length > 0)
+    : [{ project: projects.find(p => p.id === filterProject), items: [...filtered].sort(byDeadline) }];
+  const noProject = filtered.filter(t => !projects.some(p => p.id === t.projectId)).sort(byDeadline);
   if (grouped && noProject.length) groups.push({ project: { id: '_none', name: 'Sans projet', color: '#94A3B8' }, items: noProject });
 
   const Row = ({ t }) => {

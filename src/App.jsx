@@ -2658,15 +2658,23 @@ function SetPasswordForm({ onDone }) {
   );
 }
 
+// Détecte un lien d'invitation ou de réinitialisation, que Supabase le renvoie
+// dans le fragment de l'URL (#type=... — ancien flux) ou dans ses paramètres
+// (?code=...&type=... — flux PKCE, par défaut sur les projets Supabase récents).
+const isInviteOrRecoveryLink = () => /type=(invite|recovery)/.test(window.location.hash) || /type=(invite|recovery)/.test(window.location.search);
+
 export default function AuthGate() {
   const [session, setSession] = useState(undefined);
-  const [needsPassword, setNeedsPassword] = useState(() => /type=(invite|recovery)/.test(window.location.hash));
+  const [needsPassword, setNeedsPassword] = useState(() => isInviteOrRecoveryLink());
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      if (data.session && isInviteOrRecoveryLink()) setNeedsPassword(true);
+    });
     const { data: listener } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession);
-      if (event === 'PASSWORD_RECOVERY') setNeedsPassword(true);
+      if (event === 'PASSWORD_RECOVERY' || (event === 'SIGNED_IN' && isInviteOrRecoveryLink())) setNeedsPassword(true);
     });
     return () => listener.subscription.unsubscribe();
   }, []);

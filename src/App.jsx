@@ -64,10 +64,15 @@ const SERVICES = ['Radio', 'Scanner', 'IRM'];
 // pas noyer l'écran de boutons vides.
 function combinedPoolGroups(members) {
   const combos = [];
-  SERVICES.forEach(s => FUNCTIONS.forEach(f => {
-    const ids = members.filter(m => (m.services || []).includes(s) && m.role === f).map(m => m.id);
-    if (ids.length > 0) combos.push({ label: `${f} ${s}`, ids });
-  }));
+  SERVICES.forEach(s => {
+    const ids = members.filter(m => (m.services || []).includes(s) && m.role === 'Secrétaire').map(m => m.id);
+    if (ids.length > 0) combos.push({ label: `Secrétaire ${s}`, ids });
+  });
+  SERVICES.forEach(s => {
+    // Aide manipulateur compté avec Manipulateur.
+    const ids = members.filter(m => (m.services || []).includes(s) && (m.role === 'Manipulateur' || m.role === 'Aide manipulateur')).map(m => m.id);
+    if (ids.length > 0) combos.push({ label: `Manipulateur ${s}`, ids });
+  });
   return combos;
 }
 
@@ -705,8 +710,6 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
     return { ...f, raci };
   });
   const clearAllParticipants = () => setForm(f => f.assignMode === 'pool' ? { ...f, pool: [] } : { ...f, raci: {} });
-  const servicePoolGroups = SERVICES.map(s => ({ label: s, ids: availableMembers.filter(m => (m.services || []).includes(s)).map(m => m.id) }));
-  const functionPoolGroups = FUNCTIONS.map(fn => ({ label: fn, ids: availableMembers.filter(m => m.role === fn).map(m => m.id) }));
   const comboPoolGroups = combinedPoolGroups(availableMembers);
   const togglePoolParticipant = (ids) => setForm(f => {
     if (f.assignMode === 'pool') {
@@ -776,9 +779,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
             <button type="button" disabled={locked} onClick={clearAllParticipants} className="text-xs text-slate-400 hover:underline">Tout décocher</button>
           </div>
           <div className="space-y-1.5 mb-2">
-            <PoolButtonRow label="Service" groups={servicePoolGroups} isSelected={id => form.pool.includes(id)} onToggle={togglePoolParticipant} disabled={locked} />
-            <PoolButtonRow label="Fonction" groups={functionPoolGroups} isSelected={id => form.pool.includes(id)} onToggle={togglePoolParticipant} disabled={locked} />
-            <PoolButtonRow label="Combiné" groups={comboPoolGroups} isSelected={id => form.pool.includes(id)} onToggle={togglePoolParticipant} disabled={locked} />
+            <PoolButtonRow label="Pôles" groups={comboPoolGroups} isSelected={id => form.pool.includes(id)} onToggle={togglePoolParticipant} disabled={locked} />
           </div>
           <div className="flex flex-wrap gap-1.5">
             {availableMembers.map(m => {
@@ -803,9 +804,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
             <button type="button" disabled={locked} onClick={clearAllParticipants} className="text-xs text-slate-400 hover:underline">Tout décocher</button>
           </div>
           <div className="space-y-1.5 mb-2">
-            <PoolButtonRow label="Service" groups={servicePoolGroups} isSelected={id => !!form.raci[id]} onToggle={togglePoolParticipant} disabled={locked} />
-            <PoolButtonRow label="Fonction" groups={functionPoolGroups} isSelected={id => !!form.raci[id]} onToggle={togglePoolParticipant} disabled={locked} />
-            <PoolButtonRow label="Combiné" groups={comboPoolGroups} isSelected={id => !!form.raci[id]} onToggle={togglePoolParticipant} disabled={locked} />
+            <PoolButtonRow label="Pôles" groups={comboPoolGroups} isSelected={id => !!form.raci[id]} onToggle={togglePoolParticipant} disabled={locked} />
           </div>
           <div className="space-y-1.5">
             {availableMembers.map(m => {
@@ -1017,8 +1016,6 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
   const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', repeatUnit: 'aucune', repeatEvery: 1, responsibleId: '', rotateResponsible: false, responsibleRotationPool: [] });
   const [genGovernance, setGenGovernance] = useState(false);
   const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
-  const servicePoolGroups = SERVICES.map(s => ({ label: s, ids: members.filter(m => (m.services || []).includes(s)).map(m => m.id) }));
-  const functionPoolGroups = FUNCTIONS.map(f => ({ label: f, ids: members.filter(m => m.role === f).map(m => m.id) }));
   const comboPoolGroups = combinedPoolGroups(members);
   const togglePool = (ids) => setForm(f => {
     const allIn = ids.every(id => f.teamIds.includes(id));
@@ -1061,9 +1058,7 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
       </Field>
       <Field label="Équipe affectée">
         <div className="space-y-1.5 mb-2">
-          <PoolButtonRow label="Service" groups={servicePoolGroups} isSelected={id => form.teamIds.includes(id)} onToggle={togglePool} />
-          <PoolButtonRow label="Fonction" groups={functionPoolGroups} isSelected={id => form.teamIds.includes(id)} onToggle={togglePool} />
-          <PoolButtonRow label="Combiné" groups={comboPoolGroups} isSelected={id => form.teamIds.includes(id)} onToggle={togglePool} />
+          <PoolButtonRow label="Pôles" groups={comboPoolGroups} isSelected={id => form.teamIds.includes(id)} onToggle={togglePool} />
         </div>
         <div className="flex flex-wrap gap-1.5">
           {members.map(m => {
@@ -1125,7 +1120,7 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
           <option value="">— aucun —</option>
           {members.filter(m => form.teamIds.includes(m.id)).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
         </select>
-        {form.responsibleId && form.repeatUnit && form.repeatUnit !== 'aucune' && (
+        {form.repeatUnit && form.repeatUnit !== 'aucune' && form.teamIds.length > 0 && (
           <label className="flex items-center gap-2 text-xs text-slate-600 mt-2.5">
             <input type="checkbox" checked={!!form.rotateResponsible} onChange={e => setForm({ ...form, rotateResponsible: e.target.checked })} />
             Le responsable du projet change à chaque renouvellement (tirage aléatoire dans l'équipe, sans repasser deux fois avant que tout le monde soit passé)

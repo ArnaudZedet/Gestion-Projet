@@ -59,6 +59,17 @@ const isImportant = (t) => t.importance === 'critique' || t.importance === 'elev
 const PROJECT_COLORS = ['#2563EB', '#0D9488', '#B54708', '#7C3AED', '#B42318', '#0369A1', '#4D7C0F'];
 const FUNCTIONS = ['Manipulateur', 'Secrétaire', 'Aide manipulateur', 'Médecin'];
 const SERVICES = ['Radio', 'Scanner', 'IRM'];
+// Pôles croisés service + fonction (ex. "Manipulateur IRM") — seules les
+// combinaisons qui concernent au moins une personne sont retenues, pour ne
+// pas noyer l'écran de boutons vides.
+function combinedPoolGroups(members) {
+  const combos = [];
+  SERVICES.forEach(s => FUNCTIONS.forEach(f => {
+    const ids = members.filter(m => (m.services || []).includes(s) && m.role === f).map(m => m.id);
+    if (ids.length > 0) combos.push({ label: `${f} ${s}`, ids });
+  }));
+  return combos;
+}
 
 // Analyse simple d'un fichier CSV (gère , et ; comme séparateur, et les guillemets)
 function parseCSV(text) {
@@ -262,8 +273,8 @@ const ROW_MAPPERS = {
   },
   projects: {
     table: 'projects',
-    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null }),
-    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null }),
+    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null, responsible_id: p.responsibleId || null, rotate_responsible: !!p.rotateResponsible, responsible_rotation_pool: p.responsibleRotationPool || [] }),
+    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null, responsibleId: r.responsible_id || '', rotateResponsible: !!r.rotate_responsible, responsibleRotationPool: r.responsible_rotation_pool || [] }),
   },
   tasks: {
     table: 'tasks',
@@ -696,6 +707,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
   const clearAllParticipants = () => setForm(f => f.assignMode === 'pool' ? { ...f, pool: [] } : { ...f, raci: {} });
   const servicePoolGroups = SERVICES.map(s => ({ label: s, ids: availableMembers.filter(m => (m.services || []).includes(s)).map(m => m.id) }));
   const functionPoolGroups = FUNCTIONS.map(fn => ({ label: fn, ids: availableMembers.filter(m => m.role === fn).map(m => m.id) }));
+  const comboPoolGroups = combinedPoolGroups(availableMembers);
   const togglePoolParticipant = (ids) => setForm(f => {
     if (f.assignMode === 'pool') {
       const allIn = ids.every(id => f.pool.includes(id));
@@ -766,6 +778,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
           <div className="space-y-1.5 mb-2">
             <PoolButtonRow label="Service" groups={servicePoolGroups} isSelected={id => form.pool.includes(id)} onToggle={togglePoolParticipant} disabled={locked} />
             <PoolButtonRow label="Fonction" groups={functionPoolGroups} isSelected={id => form.pool.includes(id)} onToggle={togglePoolParticipant} disabled={locked} />
+            <PoolButtonRow label="Combiné" groups={comboPoolGroups} isSelected={id => form.pool.includes(id)} onToggle={togglePoolParticipant} disabled={locked} />
           </div>
           <div className="flex flex-wrap gap-1.5">
             {availableMembers.map(m => {
@@ -792,6 +805,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
           <div className="space-y-1.5 mb-2">
             <PoolButtonRow label="Service" groups={servicePoolGroups} isSelected={id => !!form.raci[id]} onToggle={togglePoolParticipant} disabled={locked} />
             <PoolButtonRow label="Fonction" groups={functionPoolGroups} isSelected={id => !!form.raci[id]} onToggle={togglePoolParticipant} disabled={locked} />
+            <PoolButtonRow label="Combiné" groups={comboPoolGroups} isSelected={id => !!form.raci[id]} onToggle={togglePoolParticipant} disabled={locked} />
           </div>
           <div className="space-y-1.5">
             {availableMembers.map(m => {
@@ -1000,11 +1014,12 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 
 function ProjectModal({ project, members, externalContacts, tasks, currentMemberId, onSave, onDelete, onClose }) {
   const isNew = !project;
-  const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', repeatUnit: 'aucune', repeatEvery: 1 });
+  const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', repeatUnit: 'aucune', repeatEvery: 1, responsibleId: '', rotateResponsible: false, responsibleRotationPool: [] });
   const [genGovernance, setGenGovernance] = useState(false);
   const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
   const servicePoolGroups = SERVICES.map(s => ({ label: s, ids: members.filter(m => (m.services || []).includes(s)).map(m => m.id) }));
   const functionPoolGroups = FUNCTIONS.map(f => ({ label: f, ids: members.filter(m => m.role === f).map(m => m.id) }));
+  const comboPoolGroups = combinedPoolGroups(members);
   const togglePool = (ids) => setForm(f => {
     const allIn = ids.every(id => f.teamIds.includes(id));
     return { ...f, teamIds: allIn ? f.teamIds.filter(id => !ids.includes(id)) : Array.from(new Set([...f.teamIds, ...ids])) };
@@ -1048,6 +1063,7 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
         <div className="space-y-1.5 mb-2">
           <PoolButtonRow label="Service" groups={servicePoolGroups} isSelected={id => form.teamIds.includes(id)} onToggle={togglePool} />
           <PoolButtonRow label="Fonction" groups={functionPoolGroups} isSelected={id => form.teamIds.includes(id)} onToggle={togglePool} />
+          <PoolButtonRow label="Combiné" groups={comboPoolGroups} isSelected={id => form.teamIds.includes(id)} onToggle={togglePool} />
         </div>
         <div className="flex flex-wrap gap-1.5">
           {members.map(m => {
@@ -1103,6 +1119,18 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
           : form.repeatUnit && form.repeatUnit !== 'aucune' && (
             <div className="text-xs text-slate-400 mt-1.5 flex items-center gap-1"><Repeat size={11} /> {repeatLabel(form.repeatUnit, form.repeatEvery)} — dès que le projet passe à "Terminé", un nouveau projet (et ses tâches) est recréé automatiquement pour le cycle suivant.</div>
           )}
+      </Field>
+      <Field label="Responsable du projet">
+        <select className={inputCls} value={form.responsibleId || ''} onChange={e => setForm({ ...form, responsibleId: e.target.value })}>
+          <option value="">— aucun —</option>
+          {members.filter(m => form.teamIds.includes(m.id)).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </select>
+        {form.responsibleId && form.repeatUnit && form.repeatUnit !== 'aucune' && (
+          <label className="flex items-center gap-2 text-xs text-slate-600 mt-2.5">
+            <input type="checkbox" checked={!!form.rotateResponsible} onChange={e => setForm({ ...form, rotateResponsible: e.target.checked })} />
+            Le responsable du projet change à chaque renouvellement (tirage aléatoire dans l'équipe, sans repasser deux fois avant que tout le monde soit passé)
+          </label>
+        )}
       </Field>
       {isNew && (
         <div className="bg-slate-50 rounded-xl p-3.5 mb-3.5">
@@ -1600,6 +1628,9 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${g.project.status === 'termine' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>{g.project.status === 'termine' ? 'Terminé' : 'En cours'}</span>
               {isProjectLate(g.project) && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-red-50 text-red-700 flex items-center gap-1"><AlertTriangle size={10} /> En retard</span>
+              )}
+              {g.project.responsibleId && (
+                <span className="text-[10px] text-slate-400 flex items-center gap-1">Responsable : {members.find(m => m.id === g.project.responsibleId)?.name || '—'}</span>
               )}
               {perm.canCreateProject && (
                 <button onClick={() => editProject(g.project)} className="text-slate-300 hover:text-slate-500 p-0.5" title="Modifier ou supprimer ce projet">
@@ -2279,6 +2310,11 @@ function ReferentApp({ session, onSignOut }) {
       if (m?.email) notifyByEmail([m.email], `Vous avez été affecté(e) au projet « ${project.name} »`,
         `<p>Bonjour ${m.name},</p><p>Vous avez été affecté(e) au projet <strong>${project.name}</strong>.</p>${project.description ? `<p>${project.description}</p>` : ''}`);
     });
+    if (project.responsibleId && project.responsibleId !== connectedAs) {
+      const rm = members.find(x => x.id === project.responsibleId);
+      if (rm?.email) notifyByEmail([rm.email], `Vous êtes responsable du projet « ${project.name} »`,
+        `<p>Bonjour ${rm.name},</p><p>Vous êtes responsable du projet <strong>${project.name}</strong>.</p>`);
+    }
   };
 
   const notifyProjectChanges = (prev, next) => {
@@ -2296,6 +2332,11 @@ function ReferentApp({ session, onSignOut }) {
       if (m?.email) notifyByEmail([m.email], `Vous avez été retiré(e) du projet « ${next.name} »`,
         `<p>Bonjour ${m.name},</p><p>Vous n'êtes plus affecté(e) au projet <strong>${next.name}</strong>.</p>`);
     });
+    if (next.responsibleId && next.responsibleId !== prev.responsibleId && next.responsibleId !== connectedAs) {
+      const rm = members.find(x => x.id === next.responsibleId);
+      if (rm?.email) notifyByEmail([rm.email], `Vous êtes responsable du projet « ${next.name} »`,
+        `<p>Bonjour ${rm.name},</p><p>Vous êtes désormais responsable du projet <strong>${next.name}</strong>.</p>`);
+    }
     // Volontairement pas de notification sur les simples changements de dates/statut
     // du projet : pour ne pas surcharger les emails, on ne notifie que
     // l'implication dans un nouveau projet ou un changement de rôle.
@@ -2471,9 +2512,21 @@ function ReferentApp({ session, onSignOut }) {
     if (justCompleted && projectObj.repeatUnit && projectObj.repeatUnit !== 'aucune' && projectObj.startDate && projectObj.endDate) {
       const nextStart = shiftByRepeat(projectObj.startDate, projectObj.repeatUnit, projectObj.repeatEvery);
       const nextEnd = shiftByRepeat(projectObj.endDate, projectObj.repeatUnit, projectObj.repeatEvery);
-      const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd, lateNotifiedAt: null };
+      let newResponsibleId = projectObj.responsibleId;
+      let newResponsibleRotationPool = projectObj.responsibleRotationPool || [];
+      if (projectObj.rotateResponsible && projectObj.responsibleId) {
+        const rotated = nextRotatedAssignee({ assigneeId: projectObj.responsibleId, rotationPool: projectObj.responsibleRotationPool }, projectObj.teamIds);
+        newResponsibleId = rotated.assigneeId;
+        newResponsibleRotationPool = rotated.rotationPool;
+      }
+      const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd, lateNotifiedAt: null, responsibleId: newResponsibleId, responsibleRotationPool: newResponsibleRotationPool };
       setProjects(prev => [...prev, newProject]);
       await upsertRow('projects', newProject);
+      if (newProject.responsibleId && newProject.responsibleId !== projectObj.responsibleId) {
+        const rm = members.find(x => x.id === newProject.responsibleId);
+        if (rm?.email) notifyByEmail([rm.email], `Vous êtes responsable du projet « ${newProject.name} »`,
+          `<p>Bonjour ${rm.name},</p><p>Vous êtes désormais responsable du projet <strong>${newProject.name}</strong> pour ce cycle (${fmtDateLong(newProject.startDate)} → ${fmtDateLong(newProject.endDate)}).</p>`);
+      }
 
       const oldTasks = tasks.filter(t => t.projectId === projectObj.id);
       const clonedTasks = oldTasks.map(t => {

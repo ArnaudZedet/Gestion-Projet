@@ -605,6 +605,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
   const currentProject = projects.find(p => p.id === form.projectId);
   const projectTeamIds = currentProject?.teamIds || [];
   const availableMembers = projectTeamIds.length > 0 ? members.filter(m => projectTeamIds.includes(m.id)) : members;
+  const projectHasOwnRepeat = !!(currentProject?.repeatUnit && currentProject.repeatUnit !== 'aucune');
 
   const handleProjectChange = (newProjectId) => {
     const newProject = projects.find(p => p.id === newProjectId);
@@ -821,21 +822,27 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
         </div>
       )}
       <Field label="Répétition">
-        <div className="grid grid-cols-2 gap-3">
-          <select disabled={locked} className={inputCls} value={form.repeatUnit || 'aucune'} onChange={e => setForm({ ...form, repeatUnit: e.target.value })}>
-            {REPEAT_UNITS.map(u => <option key={u.id} value={u.id}>{u.label}</option>)}
-          </select>
-          {form.repeatUnit && form.repeatUnit !== 'aucune' && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 shrink-0">Tous les</span>
-              <input disabled={locked} type="number" min="1" className={inputCls} value={form.repeatEvery || 1} onChange={e => setForm({ ...form, repeatEvery: Math.max(1, parseInt(e.target.value) || 1) })} />
-            </div>
-          )}
-        </div>
-        {form.repeatUnit && form.repeatUnit !== 'aucune' && (
+        {projectHasOwnRepeat ? (
+          <div className="text-xs text-amber-700 bg-amber-50 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5">
+            <Repeat size={11} className="shrink-0" /> Ce projet a déjà sa propre répétition ({repeatLabel(currentProject.repeatUnit, currentProject.repeatEvery)}) — inutile (et source de doublons) de répéter aussi cette tâche individuellement, elle sera recréée avec le reste du projet.
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <select disabled={locked} className={inputCls} value={form.repeatUnit || 'aucune'} onChange={e => setForm({ ...form, repeatUnit: e.target.value })}>
+              {REPEAT_UNITS.map(u => <option key={u.id} value={u.id}>{u.label}</option>)}
+            </select>
+            {form.repeatUnit && form.repeatUnit !== 'aucune' && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400 shrink-0">Tous les</span>
+                <input disabled={locked} type="number" min="1" className={inputCls} value={form.repeatEvery || 1} onChange={e => setForm({ ...form, repeatEvery: Math.max(1, parseInt(e.target.value) || 1) })} />
+              </div>
+            )}
+          </div>
+        )}
+        {!projectHasOwnRepeat && form.repeatUnit && form.repeatUnit !== 'aucune' && (
           <div className="text-xs text-slate-400 mt-1.5 flex items-center gap-1"><Repeat size={11} /> {repeatLabel(form.repeatUnit, form.repeatEvery)} — nouvelle occurrence créée automatiquement une fois "Terminé".</div>
         )}
-        {form.repeatUnit && form.repeatUnit !== 'aucune' && (form.assignMode === 'individuel' || form.assignMode === 'equipe') && projectTeamIds.length > 0 && (
+        {!projectHasOwnRepeat && form.repeatUnit && form.repeatUnit !== 'aucune' && (form.assignMode === 'individuel' || form.assignMode === 'equipe') && projectTeamIds.length > 0 && (
           <label className="flex items-center gap-2 text-xs text-slate-600 mt-2.5">
             <input disabled={locked} type="checkbox" checked={!!form.rotateAssignee} onChange={e => setForm({ ...form, rotateAssignee: e.target.checked })} />
             {form.assignMode === 'equipe'
@@ -843,7 +850,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
               : "Le responsable change à chaque récurrence (tirage aléatoire dans l'équipe du projet, sans repasser deux fois avant que tout le monde soit passé)"}
           </label>
         )}
-        {form.repeatUnit && form.repeatUnit !== 'aucune' && (
+        {!projectHasOwnRepeat && form.repeatUnit && form.repeatUnit !== 'aucune' && (
           <div className="mt-2.5">
             <div className="text-xs text-slate-500 mb-1.5">Jours à éviter (non travaillés / repos)</div>
             <div className="flex flex-wrap gap-1.5">
@@ -2308,7 +2315,9 @@ function ReferentApp({ session, onSignOut }) {
     setTasks(prev => existing ? prev.map(x => x.id === t.id ? t : x) : [...prev, t]);
     warnIfFailed(await upsertRow('tasks', t), 'La tâche');
     notifyTaskAssignment(existing, t);
-    if (justCompleted && t.repeatUnit && t.repeatUnit !== 'aucune') {
+    const ownerProject = projects.find(p => p.id === t.projectId);
+    const projectOwnsRepeat = ownerProject?.repeatUnit && ownerProject.repeatUnit !== 'aucune';
+    if (justCompleted && !projectOwnsRepeat && t.repeatUnit && t.repeatUnit !== 'aucune') {
       let nextStart = shiftByRepeat(t.startDate, t.repeatUnit, t.repeatEvery);
       let nextDeadline = shiftByRepeat(t.deadline, t.repeatUnit, t.repeatEvery);
       let guard = 0;

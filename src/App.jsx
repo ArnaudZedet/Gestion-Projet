@@ -352,11 +352,20 @@ async function deleteRow(key, id) {
   if (error) { console.error('Erreur de suppression', key, error); return false; }
   return true;
 }
+// Notification discrète en bas d'écran (toast), à la place des popups
+// natives du navigateur (alert/confirm) qui figent toute la page. Un simple
+// événement DOM plutôt qu'un contexte React : ça reste appelable depuis des
+// fonctions autonomes comme warnIfFailed, sans avoir à faire transiter un
+// callback partout.
+function showToast(message, type = 'error') {
+  window.dispatchEvent(new CustomEvent('app-toast', { detail: { message, type } }));
+}
+
 // Prévient l'utilisateur si un enregistrement Supabase échoue, au lieu de le laisser
 // silencieusement disparaître au prochain rechargement (c'est ce qui causait des
 // tâches "qui réapparaissent" après suppression/modification).
 function warnIfFailed(ok, action) {
-  if (!ok) window.alert(`⚠️ ${action} n'a pas pu être enregistré(e) en base (problème de connexion). Vérifiez votre connexion internet et réessayez — sinon la modification sera perdue au prochain rechargement.`);
+  if (!ok) showToast(`${action} n'a pas pu être enregistré(e) en base (problème de connexion). Vérifiez votre connexion internet et réessayez — sinon la modification sera perdue au prochain rechargement.`);
 }
 
 
@@ -606,6 +615,27 @@ function PoolButtonRow({ label, groups, isSelected, onToggle, disabled }) {
         );
       })}
     </div>
+  );
+}
+
+// Bouton de suppression avec confirmation intégrée à l'interface (deux clics :
+// le bouton se change en "Confirmer / Annuler"), à la place d'un window.confirm
+// natif qui fige la page et ne peut pas être stylé.
+function ConfirmButton({ onConfirm, label = 'Supprimer', confirmLabel, icon: Icon = Trash2, disabled }) {
+  const [confirming, setConfirming] = useState(false);
+  if (confirming) {
+    return (
+      <div className="flex items-center gap-2 text-xs flex-wrap">
+        {confirmLabel && <span className="text-slate-500">{confirmLabel}</span>}
+        <button type="button" onClick={onConfirm} className="text-white bg-red-600 hover:bg-red-700 font-medium px-2.5 py-1.5 rounded-lg">Oui, supprimer</button>
+        <button type="button" onClick={() => setConfirming(false)} className="text-slate-500 hover:text-slate-700 font-medium px-2.5 py-1.5 rounded-lg hover:bg-slate-50">Annuler</button>
+      </div>
+    );
+  }
+  return (
+    <button type="button" disabled={disabled} onClick={() => setConfirming(true)} className="text-red-500 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-red-50 text-sm font-medium px-3 py-2 rounded-lg flex items-center gap-1.5">
+      <Icon size={14} /> {label}
+    </button>
   );
 }
 
@@ -871,9 +901,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
       <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
         <div className="flex items-center gap-2">
           {task && !fullyLocked && (
-            <button onClick={() => onDelete(task.id)} disabled={statusOnly} className="text-red-500 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-red-50 text-sm font-medium px-3 py-2 rounded-lg flex items-center gap-1.5">
-              <Trash2 size={14} /> Supprimer
-            </button>
+            <ConfirmButton onConfirm={() => onDelete(task.id)} disabled={statusOnly} confirmLabel="Supprimer cette tâche ?" />
           )}
           {task && perm.canCreateTask && !fullyLocked && (
             <button onClick={() => onDuplicate(task)} className="text-slate-500 hover:bg-slate-50 text-sm font-medium px-3 py-2 rounded-lg flex items-center gap-1.5">
@@ -956,7 +984,7 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
       </Field>
       <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
         {member ? (
-          <button onClick={() => onDelete(member.id)} className="text-red-500 hover:bg-red-50 text-sm font-medium px-3 py-2 rounded-lg flex items-center gap-1.5"><Trash2 size={14} /> Retirer</button>
+          <ConfirmButton onConfirm={() => onDelete(member.id)} label="Retirer" confirmLabel="Retirer ce collaborateur ?" />
         ) : <span />}
         <button disabled={!form.name.trim()} onClick={() => onSave({ ...form, id: form.id || uid() })} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
           {member ? 'Enregistrer' : 'Ajouter'}
@@ -983,18 +1011,23 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
   });
   const toggleExternal = (id) => setForm(f => ({ ...f, externalIds: (f.externalIds || []).includes(id) ? f.externalIds.filter(x => x !== id) : [...(f.externalIds || []), id] }));
 
+  const [outOfRangeWarning, setOutOfRangeWarning] = useState('');
+  const doSave = () => {
+    const id = form.id || uid();
+    const projectObj = { ...form, id };
+    const governanceTasks = (isNew && genGovernance && form.startDate && form.endDate) ? buildGovernanceTasks(form.startDate, form.endDate, id, currentMemberId) : [];
+    onSave(projectObj, governanceTasks);
+  };
   const handleSubmit = () => {
     const id = form.id || uid();
     if (form.startDate && form.endDate) {
       const outOfRange = (tasks || []).filter(t => t.projectId === id && ((t.startDate && t.startDate < form.startDate) || (t.deadline && t.deadline > form.endDate)));
       if (outOfRange.length) {
-        const msg = `${outOfRange.length} tâche${outOfRange.length > 1 ? 's' : ''} de ce projet ${outOfRange.length > 1 ? 'ont' : 'a'} des dates en dehors de ce calendrier (${fmtDate(form.startDate)} → ${fmtDate(form.endDate)}). Continuer quand même ?`;
-        if (!window.confirm(msg)) return;
+        setOutOfRangeWarning(`${outOfRange.length} tâche${outOfRange.length > 1 ? 's' : ''} de ce projet ${outOfRange.length > 1 ? 'ont' : 'a'} des dates en dehors de ce calendrier (${fmtDate(form.startDate)} → ${fmtDate(form.endDate)}).`);
+        return;
       }
     }
-    const projectObj = { ...form, id };
-    const governanceTasks = (isNew && genGovernance && form.startDate && form.endDate) ? buildGovernanceTasks(form.startDate, form.endDate, id, currentMemberId) : [];
-    onSave(projectObj, governanceTasks);
+    doSave();
   };
 
   return (
@@ -1080,15 +1113,24 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
             : genGovernance && <div className="text-xs text-slate-400 mt-2">Préparation du changement, kick-off, démarrage, points de suivi, revue, clôture — créées comme tâches du projet, avec les dates ci-dessus.</div>}
         </div>
       )}
+      {outOfRangeWarning && (
+        <div className="text-xs text-amber-700 bg-amber-50 px-3 py-2.5 rounded-lg mb-3.5 flex items-center justify-between gap-2 flex-wrap">
+          <span>{outOfRangeWarning}</span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button type="button" onClick={() => { setOutOfRangeWarning(''); doSave(); }} className="text-amber-800 font-semibold hover:underline">Enregistrer quand même</button>
+            <button type="button" onClick={() => setOutOfRangeWarning('')} className="text-slate-400 hover:underline">Annuler</button>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
         {project ? (
-          <button onClick={() => {
-            const count = (tasks || []).filter(t => t.projectId === project.id).length;
-            const msg = count > 0
-              ? `Supprimer ce projet supprimera aussi ses ${count} tâche${count !== 1 ? 's' : ''} associée${count !== 1 ? 's' : ''}. Continuer ?`
-              : 'Supprimer ce projet ?';
-            if (window.confirm(msg)) onDelete(project.id);
-          }} className="text-red-500 hover:bg-red-50 text-sm font-medium px-3 py-2 rounded-lg flex items-center gap-1.5"><Trash2 size={14} /> Supprimer</button>
+          <ConfirmButton
+            onConfirm={() => onDelete(project.id)}
+            confirmLabel={(() => {
+              const count = (tasks || []).filter(t => t.projectId === project.id).length;
+              return count > 0 ? `Supprimera aussi ${count} tâche${count !== 1 ? 's' : ''} associée${count !== 1 ? 's' : ''}.` : 'Supprimer ce projet ?';
+            })()}
+          />
         ) : <span />}
         <button disabled={!form.name.trim() || !form.startDate || !form.endDate} onClick={handleSubmit} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
           {project ? 'Enregistrer' : 'Créer le projet'}
@@ -1173,7 +1215,7 @@ function AppointmentModal({ appointment, members, externalContacts, readOnly, on
       )}
       <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
         {appointment && !readOnly ? (
-          <button onClick={() => onDelete(appointment.id)} className="text-red-500 hover:bg-red-50 text-sm font-medium px-3 py-2 rounded-lg flex items-center gap-1.5"><Trash2 size={14} /> Supprimer</button>
+          <ConfirmButton onConfirm={() => onDelete(appointment.id)} confirmLabel="Supprimer ce rendez-vous ?" />
         ) : <span />}
         {!readOnly && (
           <button disabled={!form.title.trim() || !form.date} onClick={() => onSave({ ...form, id: form.id || uid() })} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
@@ -1197,7 +1239,7 @@ function ContactModal({ contact, onSave, onDelete, onClose }) {
       </div>
       <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
         {contact ? (
-          <button onClick={() => onDelete(contact.id)} className="text-red-500 hover:bg-red-50 text-sm font-medium px-3 py-2 rounded-lg flex items-center gap-1.5"><Trash2 size={14} /> Retirer</button>
+          <ConfirmButton onConfirm={() => onDelete(contact.id)} label="Retirer" confirmLabel="Retirer ce contact ?" />
         ) : <span />}
         <button disabled={!form.name.trim()} onClick={() => onSave({ ...form, id: form.id || uid() })} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
           {contact ? 'Enregistrer' : 'Ajouter'}
@@ -2076,7 +2118,7 @@ function FeedbackView({ currentMember, onSend }) {
     const ok = await onSend(message.trim());
     setSending(false);
     if (ok) { setSent(true); setMessage(''); } else {
-      window.alert("⚠️ Le message n'a pas pu être envoyé (problème de connexion). Réessayez dans un instant.");
+      showToast("Le message n'a pas pu être envoyé (problème de connexion). Réessayez dans un instant.");
     }
   };
 
@@ -2145,6 +2187,17 @@ function ReferentApp({ session, onSignOut }) {
   const [requestModal, setRequestModal] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const [hoveredNav, setHoveredNav] = useState('');
+  const [toasts, setToasts] = useState([]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      const id = uid();
+      setToasts(prev => [...prev, { id, ...e.detail }]);
+      setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 6000);
+    };
+    window.addEventListener('app-toast', handler);
+    return () => window.removeEventListener('app-toast', handler);
+  }, []);
 
   const myEmail = (session?.user?.email || '').toLowerCase();
 
@@ -2185,10 +2238,10 @@ function ReferentApp({ session, onSignOut }) {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        window.alert(`⚠️ L'invitation par email n'a pas pu être envoyée à ${email} (${data.error || 'erreur inconnue'}). Vous pouvez inviter la personne manuellement depuis Supabase (Authentication → Users → Invite user).`);
+        showToast(`L'invitation par email n'a pas pu être envoyée à ${email} (${data.error || 'erreur inconnue'}). Vous pouvez inviter la personne manuellement depuis Supabase (Authentication → Users → Invite user).`);
       }
     } catch {
-      window.alert(`⚠️ L'invitation par email n'a pas pu être envoyée à ${email} (problème de connexion). Vous pouvez inviter la personne manuellement depuis Supabase.`);
+      showToast(`L'invitation par email n'a pas pu être envoyée à ${email} (problème de connexion). Vous pouvez inviter la personne manuellement depuis Supabase.`);
     }
   };
 
@@ -2645,6 +2698,16 @@ function ReferentApp({ session, onSignOut }) {
       {apptModal && <AppointmentModal appointment={apptModal.appointment} members={members} externalContacts={externalContacts} readOnly={!perm.canManageAppointments} onSave={saveAppt} onDelete={deleteAppt} onClose={() => setApptModal(null)} />}
       {contactModal && perm.canManageContacts && <ContactModal contact={contactModal.contact} onSave={saveContact} onDelete={deleteContact} onClose={() => setContactModal(null)} />}
       {requestModal && <RequestModal members={members} externalContacts={externalContacts} projects={projects} currentMemberId={connectedAs} onSave={saveRequest} onClose={() => setRequestModal(null)} />}
+
+      <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 w-full max-w-sm px-4 sm:px-0">
+        {toasts.map(t => (
+          <div key={t.id} className={`rounded-xl shadow-lg border px-4 py-3 text-sm flex items-start gap-2.5 ${t.type === 'error' ? 'bg-white border-red-200' : 'bg-white border-slate-200'}`}>
+            <AlertTriangle size={16} className={`shrink-0 mt-0.5 ${t.type === 'error' ? 'text-red-500' : 'text-slate-400'}`} />
+            <span className="flex-1 text-slate-600">{t.message}</span>
+            <button onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))} className="text-slate-300 hover:text-slate-500 shrink-0"><X size={14} /></button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -104,6 +104,18 @@ create table if not exists task_requests (
   updated_at timestamptz not null default now()
 );
 
+-- File d'attente des notifications par email : chaque notification (affectation
+-- à un projet, tâche assignée, rotation de responsable...) est déposée ici au
+-- lieu d'être envoyée immédiatement, puis regroupée en un seul email par
+-- destinataire une fois par jour (voir api/cron-daily.js).
+create table if not exists notification_queue (
+  id text primary key,
+  recipient_email text not null,
+  subject text not null,
+  html text not null,
+  created_at timestamptz not null default now()
+);
+
 -- Sécurité : toute personne connectée (invitée par le manager) peut lire et
 -- écrire. Les règles fines (qui peut créer/valider quoi) restent gérées
 -- côté application, comme documenté dans le README.
@@ -111,7 +123,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['members','projects','tasks','appointments','external_contacts','task_requests']
+  foreach t in array array['members','projects','tasks','appointments','external_contacts','task_requests','notification_queue']
   loop
     execute format('alter table %I enable row level security;', t);
     execute format('drop policy if exists "authenticated all" on %I;', t);

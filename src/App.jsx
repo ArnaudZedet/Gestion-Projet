@@ -1433,10 +1433,10 @@ function Dashboard({ tasks, members, projects, appointments, connectedAs, openTa
           { label: 'À échéance ≤ 3j', value: dueSoon.length, color: '#B54708', bg: '#FEF8EC', Icon: Clock3 },
           { label: 'Terminées', value: doneCount, color: '#127A45', bg: '#EFFAF3', Icon: CheckCircle2 },
         ].map(k => (
-          <div key={k.label} className="bg-white rounded-2xl border border-slate-100 p-4" style={{ borderTop: `3px solid ${k.color}` }}>
-            <div style={{ background: k.bg, color: k.color }} className="w-8 h-8 rounded-lg flex items-center justify-center mb-3"><k.Icon size={16} /></div>
-            <div className="text-2xl font-semibold text-slate-800" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>{k.value}</div>
-            <div className="text-xs text-slate-400 mt-0.5">{k.label}</div>
+          <div key={k.label} className="rounded-2xl p-4 shadow-sm" style={{ background: `linear-gradient(150deg, ${k.bg} 0%, #FFFFFF 65%)`, border: `1px solid ${k.color}22` }}>
+            <div style={{ background: k.color, color: '#FFFFFF' }} className="w-8 h-8 rounded-lg flex items-center justify-center mb-3 shadow-sm"><k.Icon size={16} /></div>
+            <div className="text-2xl font-semibold" style={{ fontFamily: 'Space Grotesk, sans-serif', color: k.color }}>{k.value}</div>
+            <div className="text-xs text-slate-500 mt-0.5">{k.label}</div>
           </div>
         ))}
       </div>
@@ -1622,40 +1622,38 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
       ) : groups.map(g => (
         <div key={g.project?.id || 'x'} className="mb-4">
           {g.project && g.project.id !== '_none' && (
-            <div className="flex items-center gap-1.5 px-1 mb-1.5">
-              <span style={{ background: g.project.color }} className="w-2 h-2 rounded-full" />
-              <span className="text-xs font-semibold text-slate-500">{g.project.name}</span>
-              <span className="text-xs text-slate-300">· {g.items.length} tâche{g.items.length !== 1 ? 's' : ''}</span>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${g.project.status === 'termine' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>{g.project.status === 'termine' ? 'Terminé' : 'En cours'}</span>
+            <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-t-2xl flex-wrap" style={{ background: `linear-gradient(120deg, ${g.project.color}, ${g.project.color}AA)` }}>
+              <span className="text-xs font-semibold text-white">{g.project.name}</span>
+              <span className="text-xs text-white/70">· {g.items.length} tâche{g.items.length !== 1 ? 's' : ''}</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-white/25 text-white">{g.project.status === 'termine' ? 'Terminé' : 'En cours'}</span>
               {isProjectLate(g.project) && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-red-50 text-red-700 flex items-center gap-1"><AlertTriangle size={10} /> En retard</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-red-500 text-white flex items-center gap-1"><AlertTriangle size={10} /> En retard</span>
               )}
               {g.project.responsibleId && (
-                <span className="text-[10px] text-slate-400 flex items-center gap-1">Responsable : {members.find(m => m.id === g.project.responsibleId)?.name || '—'}</span>
+                <span className="text-[10px] text-white/80 flex items-center gap-1">Responsable : {members.find(m => m.id === g.project.responsibleId)?.name || '—'}</span>
               )}
               {perm.canCreateProject && (
-                <button onClick={() => editProject(g.project)} className="text-slate-300 hover:text-slate-500 p-0.5" title="Modifier ou supprimer ce projet">
+                <button onClick={() => editProject(g.project)} className="text-white/70 hover:text-white p-0.5" title="Modifier ou supprimer ce projet">
                   <Pencil size={11} />
                 </button>
               )}
               {perm.canCreateTask && (
-                <button onClick={() => newTask(g.project.id)} className="text-slate-300 hover:text-blue-600 p-0.5" title="Nouvelle tâche dans ce projet">
+                <button onClick={() => newTask(g.project.id)} className="text-white/70 hover:text-white p-0.5" title="Nouvelle tâche dans ce projet">
                   <Plus size={12} />
                 </button>
               )}
               {g.project.externalIds && g.project.externalIds.length > 0 && (
-                <span className="text-[10px] text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded-full flex items-center gap-1"><Building2 size={10} />{g.project.externalIds.length}</span>
+                <span className="text-[10px] text-white bg-white/25 px-1.5 py-0.5 rounded-full flex items-center gap-1"><Building2 size={10} />{g.project.externalIds.length}</span>
               )}
             </div>
           )}
           {g.project && g.project.id === '_none' && (
-            <div className="flex items-center gap-1.5 px-1 mb-1.5">
-              <span style={{ background: g.project.color }} className="w-2 h-2 rounded-full" />
+            <div className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-t-2xl bg-slate-100">
               <span className="text-xs font-semibold text-slate-500">{g.project.name}</span>
-              <span className="text-xs text-slate-300">· {g.items.length} tâche{g.items.length !== 1 ? 's' : ''}</span>
+              <span className="text-xs text-slate-400">· {g.items.length} tâche{g.items.length !== 1 ? 's' : ''}</span>
             </div>
           )}
-          <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden" style={g.project && g.project.id !== '_none' ? { borderTop: `3px solid ${g.project.color}` } : undefined}>
+          <div className="bg-white rounded-b-2xl border border-t-0 border-slate-100 overflow-hidden">
             <table className="w-full text-sm">
               <thead><tr className="border-b border-slate-100 text-left text-xs text-slate-400">
                 <th className="px-4 py-2.5 font-medium">Tâche</th><th className="px-4 py-2.5 font-medium">Assignée à</th>
@@ -2278,14 +2276,18 @@ function ReferentApp({ session, onSignOut }) {
 
   // Notifications applicatives (affectation à un projet, projet mis à jour,
   // tâche assignée...) — best-effort, ne bloque jamais la sauvegarde.
+  // Les notifications ne partent plus une par une : elles sont mises en
+  // file d'attente (table notification_queue) et regroupées en un seul
+  // email par destinataire, envoyé une fois par jour (cron, voir
+  // api/cron-daily.js) — pour ne pas polluer les boîtes mail à chaque
+  // affectation/rotation.
   const notifyByEmail = (to, subject, html) => {
     const recipients = (to || []).filter(Boolean);
     if (!recipients.length) return;
-    fetch('/api/send-email', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-      body: JSON.stringify({ to: recipients, subject, html }),
-    }).catch((e) => console.error('Notification email non envoyée', e));
+    const rows = recipients.map(email => ({ id: uid(), recipient_email: email, subject, html }));
+    supabase.from('notification_queue').insert(rows).then(({ error }) => {
+      if (error) console.error('Notification en attente non enregistrée', error);
+    });
   };
 
   const sendFeedback = async (message) => {
@@ -2668,10 +2670,10 @@ function ReferentApp({ session, onSignOut }) {
   return (
     <div className="flex min-h-screen bg-[#F7F8FA] overflow-hidden" style={{ fontFamily: 'Inter, sans-serif' }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');`}</style>
-      <div className="w-56 shrink-0 flex flex-col border-r border-blue-100" style={{ background: '#EAF2FE' }}>
+      <div className="w-56 shrink-0 flex flex-col" style={{ background: 'linear-gradient(180deg, #0B1B3F 0%, #142B5C 100%)' }}>
         <div className="px-5 py-5 flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm text-white shadow-sm" style={{ fontFamily: 'Space Grotesk, sans-serif', background: 'linear-gradient(135deg, #2563EB, #4F46E5)' }}>R</div>
-          <span className="font-semibold tracking-tight text-slate-800" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Mes projets</span>
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm text-white shadow-sm" style={{ fontFamily: 'Space Grotesk, sans-serif', background: 'linear-gradient(135deg, #3B82F6, #6366F1)' }}>R</div>
+          <span className="font-semibold tracking-tight text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Mes projets</span>
         </div>
         <nav className="flex-1 px-2.5 space-y-1.5 overflow-y-auto">
           {nav.map(n => {
@@ -2681,22 +2683,21 @@ function ReferentApp({ session, onSignOut }) {
               <button key={n.id} onClick={() => setView(n.id)}
                 onMouseEnter={() => setHoveredNav(n.id)} onMouseLeave={() => setHoveredNav('')}
                 style={{
-                  background: active ? n.accent : (hovered ? `${n.accent}2E` : `${n.accent}14`),
-                  border: `1.5px solid ${active ? n.accent : (hovered ? n.accent : `${n.accent}66`)}`,
-                  boxShadow: hovered && !active ? `0 0 0 3px ${n.accent}26` : 'none',
+                  background: active ? n.accent : (hovered ? `${n.accent}33` : 'transparent'),
+                  boxShadow: active ? `0 2px 10px ${n.accent}66` : 'none',
                 }}
-                className={`w-full flex items-center gap-2.5 pl-3 pr-3 py-2.5 rounded-xl text-sm font-medium transition-all ${active ? 'text-white shadow-sm' : 'text-slate-600'}`}>
+                className={`w-full flex items-center gap-2.5 pl-3 pr-3 py-2.5 rounded-xl text-sm font-medium transition-all ${active ? 'text-white' : 'text-white/70 hover:text-white'}`}>
                 <n.Icon size={16} style={{ color: active ? '#FFFFFF' : n.accent }} /> {n.label}
               </button>
             );
           })}
         </nav>
-        <div className="px-3 py-3 border-t border-blue-100/70">
+        <div className="px-3 py-3 border-t border-white/10">
           <div className="flex items-center gap-2 px-2 mb-2">
             {currentMember && <Avatar name={currentMember.name} size={26} />}
-            <div className="min-w-0 flex-1"><div className="text-xs font-medium text-slate-700 truncate">{currentMember?.name}</div><div className="text-[10px] text-slate-400 truncate">{myEmail}</div></div>
+            <div className="min-w-0 flex-1"><div className="text-xs font-medium text-white truncate">{currentMember?.name}</div><div className="text-[10px] text-white/50 truncate">{myEmail}</div></div>
           </div>
-          <button onClick={onSignOut} className="w-full text-xs text-slate-500 hover:text-slate-700 bg-white/70 hover:bg-white rounded-lg px-2.5 py-2 flex items-center justify-center gap-1.5"><Lock size={12} /> Se déconnecter</button>
+          <button onClick={onSignOut} className="w-full text-xs text-white/70 hover:text-white bg-white/10 hover:bg-white/15 rounded-lg px-2.5 py-2 flex items-center justify-center gap-1.5"><Lock size={12} /> Se déconnecter</button>
         </div>
       </div>
 
@@ -2775,7 +2776,7 @@ function AuthShell({ children }) {
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap');`}</style>
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 w-full max-w-sm">
         <div className="flex items-center gap-2 mb-6">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-sm shadow-sm" style={{ fontFamily: 'Space Grotesk, sans-serif', background: 'linear-gradient(135deg, #2563EB, #4F46E5)' }}>R</div>
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-sm shadow-sm" style={{ fontFamily: 'Space Grotesk, sans-serif', background: 'linear-gradient(135deg, #3B82F6, #6366F1)' }}>R</div>
           <span className="font-semibold text-lg text-slate-800" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Mes projets</span>
         </div>
         {children}

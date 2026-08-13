@@ -835,10 +835,12 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
         {form.repeatUnit && form.repeatUnit !== 'aucune' && (
           <div className="text-xs text-slate-400 mt-1.5 flex items-center gap-1"><Repeat size={11} /> {repeatLabel(form.repeatUnit, form.repeatEvery)} — nouvelle occurrence créée automatiquement une fois "Terminé".</div>
         )}
-        {form.repeatUnit && form.repeatUnit !== 'aucune' && form.assignMode === 'individuel' && projectTeamIds.length > 0 && (
+        {form.repeatUnit && form.repeatUnit !== 'aucune' && (form.assignMode === 'individuel' || form.assignMode === 'equipe') && projectTeamIds.length > 0 && (
           <label className="flex items-center gap-2 text-xs text-slate-600 mt-2.5">
             <input disabled={locked} type="checkbox" checked={!!form.rotateAssignee} onChange={e => setForm({ ...form, rotateAssignee: e.target.checked })} />
-            Le responsable change à chaque récurrence (tirage aléatoire dans l'équipe du projet, sans repasser deux fois avant que tout le monde soit passé)
+            {form.assignMode === 'equipe'
+              ? "Le rôle \"R\" (Responsable) change à chaque récurrence (tirage aléatoire dans l'équipe du projet, sans repasser deux fois avant que tout le monde soit passé)"
+              : "Le responsable change à chaque récurrence (tirage aléatoire dans l'équipe du projet, sans repasser deux fois avant que tout le monde soit passé)"}
           </label>
         )}
         {form.repeatUnit && form.repeatUnit !== 'aucune' && (
@@ -2289,6 +2291,17 @@ function ReferentApp({ session, onSignOut }) {
     return { assigneeId, rotationPool: rest };
   };
 
+  // Même principe que nextRotatedAssignee, mais pour le mode Équipe (RACI) :
+  // le rôle "R" (Responsable) tourne, les autres rôles (A/C/I) restent tels quels.
+  const rotateRaciResponsible = (t, teamOverride) => {
+    const currentR = Object.entries(t.raci || {}).find(([, r]) => r === 'R')?.[0] || '';
+    const { assigneeId, rotationPool } = nextRotatedAssignee({ ...t, assigneeId: currentR }, teamOverride);
+    const raci = { ...(t.raci || {}) };
+    Object.keys(raci).forEach(id => { if (raci[id] === 'R') delete raci[id]; });
+    if (assigneeId) raci[assigneeId] = 'R';
+    return { raci, rotationPool };
+  };
+
   const saveTask = async (t) => {
     const existing = tasks.find(x => x.id === t.id);
     const justCompleted = existing && existing.status !== 'termine' && t.status === 'termine';
@@ -2308,6 +2321,10 @@ function ReferentApp({ session, onSignOut }) {
       if (t.rotateAssignee && t.assignMode === 'individuel') {
         const { assigneeId, rotationPool } = nextRotatedAssignee(t);
         clone.assigneeId = assigneeId;
+        clone.rotationPool = rotationPool;
+      } else if (t.rotateAssignee && t.assignMode === 'equipe') {
+        const { raci, rotationPool } = rotateRaciResponsible(t);
+        clone.raci = raci;
         clone.rotationPool = rotationPool;
       }
       setTasks(prev => [...prev, clone]);
@@ -2418,6 +2435,10 @@ function ReferentApp({ session, onSignOut }) {
         if (t.rotateAssignee && t.assignMode === 'individuel') {
           const { assigneeId, rotationPool } = nextRotatedAssignee(t, newProject.teamIds);
           clone.assigneeId = assigneeId;
+          clone.rotationPool = rotationPool;
+        } else if (t.rotateAssignee && t.assignMode === 'equipe') {
+          const { raci, rotationPool } = rotateRaciResponsible(t, newProject.teamIds);
+          clone.raci = raci;
           clone.rotationPool = rotationPool;
         }
         return clone;

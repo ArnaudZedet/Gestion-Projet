@@ -24,6 +24,12 @@ create table if not exists projects (
   description text,
   color text,
   team_ids jsonb not null default '[]'::jsonb,
+  external_ids jsonb not null default '[]'::jsonb,
+  start_date date,
+  end_date date,
+  status text not null default 'en_cours',
+  repeat_unit text not null default 'aucune',
+  repeat_every int not null default 1,
   updated_at timestamptz not null default now()
 );
 

@@ -136,6 +136,14 @@ const REQUEST_KINDS = [
 ];
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+function shuffleArray(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const addMonths = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setMonth(d.getMonth() + n); return d.toISOString().slice(0, 10); };
@@ -254,8 +262,8 @@ const ROW_MAPPERS = {
   },
   projects: {
     table: 'projects',
-    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours' }),
-    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours' }),
+    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1 }),
+    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1 }),
   },
   tasks: {
     table: 'tasks',
@@ -265,7 +273,7 @@ const ROW_MAPPERS = {
       priority: t.priority, importance: t.importance, scope: t.scope, status: t.status,
       start_date: d(t.startDate), deadline: d(t.deadline), time: t.time || null,
       repeat_unit: t.repeatUnit, repeat_every: t.repeatEvery, avoid_days: t.avoidDays || [],
-      rotate_assignee: !!t.rotateAssignee,
+      rotate_assignee: !!t.rotateAssignee, rotation_pool: t.rotationPool || [],
       is_governance: !!t.isGovernance, governance_type: t.governanceType || null, created_at: d(t.createdAt),
     }),
     fromRow: (r) => ({
@@ -274,7 +282,7 @@ const ROW_MAPPERS = {
       priority: r.priority, importance: r.importance, scope: r.scope, status: r.status,
       startDate: r.start_date || '', deadline: r.deadline || '', time: r.time || '',
       repeatUnit: r.repeat_unit, repeatEvery: r.repeat_every, avoidDays: r.avoid_days || [],
-      rotateAssignee: !!r.rotate_assignee,
+      rotateAssignee: !!r.rotate_assignee, rotationPool: r.rotation_pool || [],
       isGovernance: !!r.is_governance, governanceType: r.governance_type || undefined, createdAt: r.created_at || '',
     }),
   },
@@ -830,7 +838,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
         {form.repeatUnit && form.repeatUnit !== 'aucune' && form.assignMode === 'individuel' && projectTeamIds.length > 0 && (
           <label className="flex items-center gap-2 text-xs text-slate-600 mt-2.5">
             <input disabled={locked} type="checkbox" checked={!!form.rotateAssignee} onChange={e => setForm({ ...form, rotateAssignee: e.target.checked })} />
-            Le responsable change à chaque récurrence (tourne dans l'équipe du projet)
+            Le responsable change à chaque récurrence (tirage aléatoire dans l'équipe du projet, sans repasser deux fois avant que tout le monde soit passé)
           </label>
         )}
         {form.repeatUnit && form.repeatUnit !== 'aucune' && (
@@ -955,7 +963,7 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 
 function ProjectModal({ project, members, externalContacts, tasks, currentMemberId, onSave, onDelete, onClose }) {
   const isNew = !project;
-  const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours' });
+  const [form, setForm] = useState(project || { name: '', description: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', repeatUnit: 'aucune', repeatEvery: 1 });
   const [genGovernance, setGenGovernance] = useState(false);
   const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
   const poolGroups = [
@@ -1046,6 +1054,24 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
         <Field label="Fin du projet"><input type="date" min={form.startDate || undefined} className={inputCls} value={form.endDate || ''} onChange={e => setForm({ ...form, endDate: e.target.value })} /></Field>
       </div>
       <div className="text-xs text-slate-400 -mt-2.5 mb-3.5">Ces deux dates forment le calendrier du projet : les tâches créées dedans ne pourront pas avoir de date en dehors.</div>
+      <Field label="Répétition du projet">
+        <div className="grid grid-cols-2 gap-3">
+          <select disabled={!form.startDate || !form.endDate} className={inputCls} value={form.repeatUnit || 'aucune'} onChange={e => setForm({ ...form, repeatUnit: e.target.value })}>
+            {REPEAT_UNITS.map(u => <option key={u.id} value={u.id}>{u.label}</option>)}
+          </select>
+          {form.repeatUnit && form.repeatUnit !== 'aucune' && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400 shrink-0">Tous les</span>
+              <input type="number" min="1" className={inputCls} value={form.repeatEvery || 1} onChange={e => setForm({ ...form, repeatEvery: Math.max(1, parseInt(e.target.value) || 1) })} />
+            </div>
+          )}
+        </div>
+        {(!form.startDate || !form.endDate)
+          ? <div className="text-xs text-slate-400 mt-1.5">Renseignez les dates de début et de fin ci-dessus pour activer la répétition.</div>
+          : form.repeatUnit && form.repeatUnit !== 'aucune' && (
+            <div className="text-xs text-slate-400 mt-1.5 flex items-center gap-1"><Repeat size={11} /> {repeatLabel(form.repeatUnit, form.repeatEvery)} — dès que le projet passe à "Terminé", un nouveau projet (et ses tâches) est recréé automatiquement pour le cycle suivant.</div>
+          )}
+      </Field>
       {isNew && (
         <div className="bg-slate-50 rounded-xl p-3.5 mb-3.5">
           <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
@@ -2247,11 +2273,20 @@ function ReferentApp({ session, onSignOut }) {
     });
   };
 
-  const nextRotatedAssignee = (t) => {
-    const team = projects.find(p => p.id === t.projectId)?.teamIds || [];
-    if (team.length === 0) return t.assigneeId;
-    const idx = team.indexOf(t.assigneeId);
-    return team[(idx + 1) % team.length];
+  // Tirage aléatoire "sac tournant" : chaque membre de l'équipe du projet
+  // passe une fois avant qu'un nom puisse ressortir une deuxième fois.
+  // rotationPool = les personnes qui n'ont pas encore été tirées dans le
+  // cycle en cours ; vide → on démarre un nouveau cycle (nouveau tirage).
+  const nextRotatedAssignee = (t, teamOverride) => {
+    const team = teamOverride || projects.find(p => p.id === t.projectId)?.teamIds || [];
+    if (team.length === 0) return { assigneeId: t.assigneeId, rotationPool: [] };
+    let pool = (t.rotationPool || []).filter(id => team.includes(id));
+    if (pool.length === 0) {
+      pool = shuffleArray(team);
+      if (pool.length > 1 && pool[0] === t.assigneeId) [pool[0], pool[1]] = [pool[1], pool[0]];
+    }
+    const [assigneeId, ...rest] = pool;
+    return { assigneeId, rotationPool: rest };
   };
 
   const saveTask = async (t) => {
@@ -2270,7 +2305,11 @@ function ReferentApp({ session, onSignOut }) {
         guard++;
       }
       const clone = { ...t, id: uid(), status: 'a_faire', createdAt: todayISO(), startDate: nextStart, deadline: nextDeadline };
-      if (t.rotateAssignee && t.assignMode === 'individuel') clone.assigneeId = nextRotatedAssignee(t);
+      if (t.rotateAssignee && t.assignMode === 'individuel') {
+        const { assigneeId, rotationPool } = nextRotatedAssignee(t);
+        clone.assigneeId = assigneeId;
+        clone.rotationPool = rotationPool;
+      }
       setTasks(prev => [...prev, clone]);
       warnIfFailed(await upsertRow('tasks', clone), 'La prochaine occurrence');
     }
@@ -2345,9 +2384,10 @@ function ReferentApp({ session, onSignOut }) {
     setMemberModal(null);
   };
 
-  const saveProject = (projectObj, governanceTasks) => {
+  const saveProject = async (projectObj, governanceTasks) => {
     const prevProject = projects.find(p => p.id === projectObj.id);
     const exists = !!prevProject;
+    const justCompleted = exists && prevProject.status !== 'termine' && projectObj.status === 'termine';
     setProjects(prev => exists ? prev.map(p => p.id === projectObj.id ? projectObj : p) : [...prev, projectObj]);
     upsertRow('projects', projectObj);
     if (governanceTasks && governanceTasks.length) {
@@ -2356,6 +2396,37 @@ function ReferentApp({ session, onSignOut }) {
     }
     if (exists) notifyProjectChanges(prevProject, projectObj);
     else notifyNewProjectTeam(projectObj);
+
+    // Répétition au niveau projet : à la clôture, on recrée un nouveau
+    // projet pour le cycle suivant (dates décalées), avec une copie de
+    // chacune de ses tâches (dates décalées pareil, responsable qui tourne
+    // si la tâche a "rotateAssignee").
+    if (justCompleted && projectObj.repeatUnit && projectObj.repeatUnit !== 'aucune' && projectObj.startDate && projectObj.endDate) {
+      const nextStart = shiftByRepeat(projectObj.startDate, projectObj.repeatUnit, projectObj.repeatEvery);
+      const nextEnd = shiftByRepeat(projectObj.endDate, projectObj.repeatUnit, projectObj.repeatEvery);
+      const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd };
+      setProjects(prev => [...prev, newProject]);
+      await upsertRow('projects', newProject);
+
+      const oldTasks = tasks.filter(t => t.projectId === projectObj.id);
+      const clonedTasks = oldTasks.map(t => {
+        const clone = {
+          ...t, id: uid(), projectId: newProject.id, status: 'a_faire', createdAt: todayISO(),
+          startDate: shiftByRepeat(t.startDate, projectObj.repeatUnit, projectObj.repeatEvery),
+          deadline: shiftByRepeat(t.deadline, projectObj.repeatUnit, projectObj.repeatEvery),
+        };
+        if (t.rotateAssignee && t.assignMode === 'individuel') {
+          const { assigneeId, rotationPool } = nextRotatedAssignee(t, newProject.teamIds);
+          clone.assigneeId = assigneeId;
+          clone.rotationPool = rotationPool;
+        }
+        return clone;
+      });
+      if (clonedTasks.length) {
+        setTasks(prev => [...prev, ...clonedTasks]);
+        await insertRows('tasks', clonedTasks);
+      }
+    }
     setProjectModal(null);
   };
   const deleteProject = async (id) => {

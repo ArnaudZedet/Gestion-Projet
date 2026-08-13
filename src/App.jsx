@@ -634,7 +634,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
   const poolGroups = [
     ...SERVICES.map(s => ({ label: s, ids: availableMembers.filter(m => m.service === s).map(m => m.id) })),
     ...FUNCTIONS.map(fn => ({ label: fn, ids: availableMembers.filter(m => m.role === fn).map(m => m.id) })),
-  ].filter(g => g.ids.length > 0);
+  ];
   const togglePoolParticipant = (ids) => setForm(f => {
     if (f.assignMode === 'pool') {
       const allIn = ids.every(id => f.pool.includes(id));
@@ -700,10 +700,11 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
           <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
             <div className="flex flex-wrap gap-1.5">
               {poolGroups.map(g => {
-                const allIn = g.ids.every(id => form.pool.includes(id));
+                const empty = g.ids.length === 0;
+                const allIn = !empty && g.ids.every(id => form.pool.includes(id));
                 return (
-                  <button key={g.label} type="button" disabled={locked} onClick={() => togglePoolParticipant(g.ids)}
-                    className={`text-xs px-2 py-1 rounded-full border font-medium ${allIn ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
+                  <button key={g.label} type="button" disabled={locked || empty} onClick={() => togglePoolParticipant(g.ids)}
+                    className={`text-xs px-2 py-1 rounded-full border font-medium ${empty ? 'opacity-40 cursor-not-allowed bg-slate-50 border-slate-200 text-slate-400' : allIn ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
                     Tout {g.label} ({g.ids.length})
                   </button>
                 );
@@ -735,10 +736,11 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
           <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
             <div className="flex flex-wrap gap-1.5">
               {poolGroups.map(g => {
-                const allIn = g.ids.every(id => !!form.raci[id]);
+                const empty = g.ids.length === 0;
+                const allIn = !empty && g.ids.every(id => !!form.raci[id]);
                 return (
-                  <button key={g.label} type="button" disabled={locked} onClick={() => togglePoolParticipant(g.ids)}
-                    className={`text-xs px-2 py-1 rounded-full border font-medium ${allIn ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
+                  <button key={g.label} type="button" disabled={locked || empty} onClick={() => togglePoolParticipant(g.ids)}
+                    className={`text-xs px-2 py-1 rounded-full border font-medium ${empty ? 'opacity-40 cursor-not-allowed bg-slate-50 border-slate-200 text-slate-400' : allIn ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
                     Tout {g.label} ({g.ids.length})
                   </button>
                 );
@@ -943,7 +945,7 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
   const poolGroups = [
     ...SERVICES.map(s => ({ label: s, ids: members.filter(m => m.service === s).map(m => m.id) })),
     ...FUNCTIONS.map(f => ({ label: f, ids: members.filter(m => m.role === f).map(m => m.id) })),
-  ].filter(g => g.ids.length > 0);
+  ];
   const togglePool = (ids) => setForm(f => {
     const allIn = ids.every(id => f.teamIds.includes(id));
     return { ...f, teamIds: allIn ? f.teamIds.filter(id => !ids.includes(id)) : Array.from(new Set([...f.teamIds, ...ids])) };
@@ -980,10 +982,11 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
         {poolGroups.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mb-2">
             {poolGroups.map(g => {
-              const allIn = g.ids.every(id => form.teamIds.includes(id));
+              const empty = g.ids.length === 0;
+              const allIn = !empty && g.ids.every(id => form.teamIds.includes(id));
               return (
-                <button key={g.label} type="button" onClick={() => togglePool(g.ids)}
-                  className={`text-xs px-2.5 py-1 rounded-full border font-medium flex items-center gap-1 ${allIn ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
+                <button key={g.label} type="button" disabled={empty} onClick={() => togglePool(g.ids)}
+                  className={`text-xs px-2.5 py-1 rounded-full border font-medium flex items-center gap-1 ${empty ? 'opacity-40 cursor-not-allowed bg-slate-50 border-slate-200 text-slate-400' : allIn ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
                   <Users size={11} /> Tout {g.label} ({g.ids.length})
                 </button>
               );
@@ -2278,11 +2281,11 @@ function ReferentApp({ session, onSignOut }) {
     insertRows('members', newMembers);
   };
 
-  const saveMember = (m) => {
+  const saveMember = async (m) => {
     const prevMember = members.find(x => x.id === m.id);
     const exists = !!prevMember;
     setMembers(prev => exists ? prev.map(x => x.id === m.id ? m : x) : [...prev, m]);
-    upsertRow('members', m);
+    warnIfFailed(await upsertRow('members', m), 'La fiche du collaborateur');
     const newEmail = (m.email || '').trim();
     const hadEmail = (prevMember?.email || '').trim();
     if (newEmail && newEmail.toLowerCase() !== hadEmail.toLowerCase()) inviteMemberByEmail(newEmail);

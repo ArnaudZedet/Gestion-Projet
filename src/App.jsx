@@ -64,7 +64,7 @@ const SERVICES = ['Radio', 'Scanner', 'IRM'];
 const PROJECT_SERVICES = ['Radio', 'Scanner', 'IRM', 'Autre'];
 // Couleur dominante par service, utilisée pour regrouper visuellement les
 // projets par service (distincte de la couleur propre à chaque projet).
-const SERVICE_COLORS = { Radio: '#2563EB', Scanner: '#0D9488', IRM: '#7C3AED', Autre: '#64748B' };
+const SERVICE_COLORS = { Scanner: '#2563EB', Radio: '#7C3AED', IRM: '#059669', Autre: '#EA580C' };
 // Pôles croisés service + fonction (ex. "Manipulateur IRM") — seules les
 // combinaisons qui concernent au moins une personne sont retenues, pour ne
 // pas noyer l'écran de boutons vides.

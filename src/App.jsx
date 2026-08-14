@@ -41,7 +41,6 @@ const RACI_LEVELS = [
   { id: 'C', label: 'Consulté',    color: '#0D9488', bg: '#D7F5F0' },
   { id: 'I', label: 'Informé',     color: '#475467', bg: '#F1F2F4' },
 ];
-const RACI_CYCLE = ['', 'I', 'R', 'A', 'C'];
 
 const IMPORTANCE = [
   { id: 'critique', label: 'Critique', color: '#B42318', bg: '#FEE4E2' },
@@ -74,12 +73,12 @@ function combinedPoolGroups(members) {
   const combos = [];
   SERVICES.forEach(s => {
     const ids = members.filter(m => (m.services || []).includes(s) && m.role === 'Secrétaire').map(m => m.id);
-    if (ids.length > 0) combos.push({ label: `Secrétaire ${s}`, ids });
+    if (ids.length > 0) combos.push({ label: `Secrétaires ${s}`, ids });
   });
   SERVICES.forEach(s => {
     // Aide manipulateur compté avec Manipulateur.
     const ids = members.filter(m => (m.services || []).includes(s) && (m.role === 'Manipulateur' || m.role === 'Aide manipulateur')).map(m => m.id);
-    if (ids.length > 0) combos.push({ label: `Manipulateur ${s}`, ids });
+    if (ids.length > 0) combos.push({ label: `Manipulateurs ${s}`, ids });
   });
   return combos;
 }
@@ -666,7 +665,7 @@ function PoolButtonRow({ label, groups, isSelected, onToggle, disabled }) {
         return (
           <button key={g.label} type="button" disabled={disabled || empty} onClick={() => onToggle(g.ids)}
             className={`text-xs px-2 py-1 rounded-full border font-medium ${empty ? 'opacity-40 cursor-not-allowed bg-slate-50 border-slate-200 text-slate-400' : allIn ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
-            Tout {g.label} ({g.ids.length})
+            {g.label} ({g.ids.length})
           </button>
         );
       })}
@@ -1695,10 +1694,15 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
     );
   };
 
-  const ProjectGroupBlock = ({ g }) => (
+  const ProjectGroupBlock = ({ g }) => {
+    // Le bandeau reprend la couleur dominante du service (cohérence visuelle
+    // avec le titre de section), et retombe sur la couleur propre du projet
+    // si aucun service n'est renseigné.
+    const bandColor = (g.project?.service && SERVICE_COLORS[g.project.service]) || g.project?.color || '#94A3B8';
+    return (
     <div className="mb-4">
       {g.project && g.project.id !== '_none' && (
-        <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-t-2xl flex-wrap" style={{ background: `linear-gradient(120deg, ${g.project.color}, ${g.project.color}AA)` }}>
+        <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-t-2xl flex-wrap" style={{ background: `linear-gradient(120deg, ${bandColor}, ${bandColor}AA)` }}>
           <span className="text-xs font-semibold text-white">{g.project.name}</span>
           <span className="text-xs text-white/70">· {g.items.length} tâche{g.items.length !== 1 ? 's' : ''}</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-white/25 text-white">{g.project.status === 'termine' ? 'Terminé' : 'En cours'}</span>
@@ -1745,7 +1749,8 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
         </table>
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div>
@@ -1803,6 +1808,10 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
 function TeamView({ members, tasks, perm, editMember, newMember, onImport }) {
   const fileInputRef = React.useRef(null);
   const [importMsg, setImportMsg] = useState('');
+  const [query, setQuery] = useState('');
+  const visibleMembers = members
+    .filter(m => m.name.toLowerCase().includes(query.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const handleFile = (e) => {
     const file = e.target.files?.[0];
@@ -1820,16 +1829,22 @@ function TeamView({ members, tasks, perm, editMember, newMember, onImport }) {
 
   return (
     <div>
-      {perm.canManageTeam && (
-        <div className="flex items-center justify-end gap-2 mb-2">
-          <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleFile} />
-          <button onClick={() => fileInputRef.current?.click()} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Upload size={14} /> Importer un fichier (CSV)</button>
-          <button onClick={newMember} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Plus size={14} /> Ajouter un collaborateur</button>
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
+        <div className="relative flex-1 min-w-[160px]">
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Rechercher un collaborateur…" className="w-full border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
         </div>
-      )}
+        {perm.canManageTeam && (
+          <div className="flex items-center gap-2 ml-auto">
+            <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleFile} />
+            <button onClick={() => fileInputRef.current?.click()} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Upload size={14} /> Importer un fichier (CSV)</button>
+            <button onClick={newMember} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Plus size={14} /> Ajouter un collaborateur</button>
+          </div>
+        )}
+      </div>
       {importMsg && <div className="text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2 mb-4">{importMsg}</div>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {members.map(m => {
+        {visibleMembers.map(m => {
           const active = tasks.filter(t => isTaskOfMine(t, m.id) && t.status !== 'termine').length;
           return (
             <div key={m.id} className="bg-white rounded-2xl border border-slate-100 p-4">
@@ -1843,21 +1858,29 @@ function TeamView({ members, tasks, perm, editMember, newMember, onImport }) {
           );
         })}
       </div>
-      {members.length === 0 && <EmptyState icon={Users} title="Aucun collaborateur" />}
+      {visibleMembers.length === 0 && <EmptyState icon={Users} title={members.length === 0 ? "Aucun collaborateur" : "Aucun résultat"} />}
     </div>
   );
 }
 
 function ContactsView({ contacts, perm, editContact, newContact }) {
+  const [query, setQuery] = useState('');
+  const visibleContacts = contacts
+    .filter(c => c.name.toLowerCase().includes(query.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name));
   return (
     <div>
-      {perm.canManageContacts && (
-        <div className="flex items-center justify-end mb-4">
-          <button onClick={newContact} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Plus size={14} /> Ajouter un contact</button>
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <div className="relative flex-1 min-w-[160px]">
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Rechercher un contact…" className="w-full border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
         </div>
-      )}
+        {perm.canManageContacts && (
+          <button onClick={newContact} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5 ml-auto"><Plus size={14} /> Ajouter un contact</button>
+        )}
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {contacts.map(c => (
+        {visibleContacts.map(c => (
           <div key={c.id} className="bg-white rounded-2xl border border-slate-100 p-4">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
@@ -1870,7 +1893,7 @@ function ContactsView({ contacts, perm, editContact, newContact }) {
           </div>
         ))}
       </div>
-      {contacts.length === 0 && <EmptyState icon={Building2} title="Aucun contact externe" />}
+      {visibleContacts.length === 0 && <EmptyState icon={Building2} title={contacts.length === 0 ? "Aucun contact externe" : "Aucun résultat"} />}
     </div>
   );
 }
@@ -2150,12 +2173,10 @@ function RaciView({ tasks, projects, members, perm, currentMemberId, updateRaci 
   // RACI, le responsable du projet ou un administrateur peut modifier —
   // évalué ligne par ligne puisque ça dépend de chaque tâche.
   const canEditRow = (t) => canEditTask(t, currentMemberId, projects.find(p => p.id === t.projectId), perm.isManager);
-  const cycle = (task, memberId) => {
+  const setRole = (task, memberId, role) => {
     if (!canEditRow(task)) return;
-    const current = task.raci?.[memberId] || '';
-    const next = RACI_CYCLE[(RACI_CYCLE.indexOf(current) + 1) % RACI_CYCLE.length];
     const raci = { ...(task.raci || {}) };
-    if (next) raci[memberId] = next; else delete raci[memberId];
+    if (role) raci[memberId] = role; else delete raci[memberId];
     updateRaci(task.id, raci);
   };
   return (
@@ -2182,12 +2203,10 @@ function RaciView({ tasks, projects, members, perm, currentMemberId, updateRaci 
                   </td>
                   {visibleMembers.map(m => {
                     const v = t.raci?.[m.id] || '';
-                    const lvl = RACI_LEVELS.find(r => r.id === v);
                     const editable = canEditRow(t);
                     return (
                       <td key={m.id} className="px-2 py-2 text-center">
-                        <button disabled={!editable} onClick={() => cycle(t, m.id)} style={lvl ? { background: lvl.bg, color: lvl.color } : {}}
-                          className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center mx-auto ${!lvl ? 'bg-slate-50 text-slate-300' : ''} ${editable ? 'hover:brightness-95 cursor-pointer' : 'cursor-default'}`}>{v || '·'}</button>
+                        <RaciPicker memberId={m.id} value={v} disabled={!editable} onChange={(id, role) => setRole(t, id, role)} />
                       </td>
                     );
                   })}
@@ -2316,7 +2335,7 @@ function navFor(perm) {
   }
   if (perm.isManager) {
     nav.push({ id: 'priorisation', label: 'Priorisation', Icon: Target, accent: '#FB923C' });
-    nav.push({ id: 'team', label: 'Équipe et référents', Icon: Users, accent: '#F472B6' });
+    nav.push({ id: 'team', label: 'Équipe', Icon: Users, accent: '#F472B6' });
     nav.push({ id: 'contacts', label: 'Contacts externes', Icon: Building2, accent: '#C084FC' });
   }
   nav.push({ id: 'feedback', label: 'Commentaires & suggestions', Icon: MessageSquare, accent: '#14B8A6' });

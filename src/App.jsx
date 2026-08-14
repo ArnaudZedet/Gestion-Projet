@@ -2696,6 +2696,7 @@ function ReferentApp({ session, onSignOut }) {
     // projet pour le cycle suivant (dates décalées), avec une copie de
     // chacune de ses tâches (dates décalées pareil, responsable qui tourne
     // si la tâche a "rotateAssignee").
+    let renewedProject = null;
     if (justCompleted && projectObj.repeatUnit && projectObj.repeatUnit !== 'aucune' && projectObj.startDate && projectObj.endDate) {
       const nextStart = shiftByRepeat(projectObj.startDate, projectObj.repeatUnit, projectObj.repeatEvery);
       const nextEnd = shiftByRepeat(projectObj.endDate, projectObj.repeatUnit, projectObj.repeatEvery);
@@ -2710,6 +2711,7 @@ function ReferentApp({ session, onSignOut }) {
         newResponsibleRotationPool = rotated.rotationPool;
       }
       const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd, lateNotifiedAt: null, responsibleIds: newResponsibleIds, responsibleRotationPool: newResponsibleRotationPool };
+      renewedProject = newProject;
       setProjects(prev => [...prev, newProject]);
       warnIfFailed(await upsertRow('projects', newProject), 'Le renouvellement du projet');
       newResponsibleIds.filter(id => !(projectObj.responsibleIds || []).includes(id)).forEach(id => {
@@ -2742,7 +2744,7 @@ function ReferentApp({ session, onSignOut }) {
         oldTasks.forEach((t, i) => notifyTaskAssignment(t, clonedTasks[i]));
       }
     }
-    setProjectModal(null);
+    setProjectModal(renewedProject ? { project: renewedProject } : null);
   };
   const deleteProject = async (id) => {
     setProjects(prev => prev.filter(p => p.id !== id));

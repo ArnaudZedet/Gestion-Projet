@@ -1639,8 +1639,23 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
   const [filterMember, setFilterMember] = useState('all');
   const [filterProject, setFilterProject] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
+  const [filterTeam, setFilterTeam] = useState('all');
   const [query, setQuery] = useState('');
   const selectCls = "border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 bg-white focus:outline-none";
+
+  // Rôles des personnes impliquées dans une tâche (responsable, pool, RACI),
+  // pour le filtre "Manipulateurs" / "Secrétaires" ci-dessous.
+  const rolesOfTask = (t) => {
+    const ids = new Set([t.assigneeId, ...(t.pool || []), ...Object.keys(t.raci || {})].filter(Boolean));
+    return [...ids].map(id => members.find(m => m.id === id)?.role).filter(Boolean);
+  };
+  const matchesTeam = (t) => {
+    if (filterTeam === 'all') return true;
+    const roles = rolesOfTask(t);
+    if (filterTeam === 'manip') return roles.some(r => r === 'Manipulateur' || r === 'Aide manipulateur');
+    if (filterTeam === 'secretaire') return roles.some(r => r === 'Secrétaire');
+    return true;
+  };
 
   // tasks/projects arrivent déjà bornés à l'équipe de l'utilisateur pour les non-managers
   // (voir scopedTasks/scopedProjects dans ReferentApp) : pas besoin de refiltrer par équipe ici.
@@ -1652,6 +1667,7 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
     (filterMember === 'all' || t.assigneeId === filterMember || (t.raci && t.raci[filterMember]) || (t.pool && t.pool.includes(filterMember))) &&
     (filterProject === 'all' || t.projectId === filterProject) &&
     (filterStatus === 'all' || t.status === filterStatus) &&
+    matchesTeam(t) &&
     t.title.toLowerCase().includes(query.toLowerCase())
   );
 
@@ -1786,6 +1802,14 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
         <select className={selectCls} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
           <option value="all">Tous les statuts</option>{STATUSES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
         </select>
+        <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+          {[{ id: 'all', label: 'Toute l\'équipe' }, { id: 'manip', label: 'Manipulateurs' }, { id: 'secretaire', label: 'Secrétaires' }].map(o => (
+            <button key={o.id} type="button" onClick={() => setFilterTeam(o.id)}
+              className={`px-3 py-1.5 ${filterTeam === o.id ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+              {o.label}
+            </button>
+          ))}
+        </div>
         <div className="ml-auto flex gap-2">
           {perm.canCreateProject && <button onClick={newProject} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><FolderPlus size={14} /> Nouveau projet</button>}
           {perm.canCreateTask && <button onClick={() => newTask(filterProject !== 'all' ? filterProject : undefined)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Plus size={14} /> Nouvelle tâche</button>}

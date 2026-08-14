@@ -1081,6 +1081,14 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
       projectObj.pendingApproval = !perm.isManager;
       if (!perm.isManager && (!projectObj.responsibleIds || projectObj.responsibleIds.length === 0)) projectObj.responsibleIds = [currentMemberId];
     }
+    // Rotation cochée mais personne choisi : tirage aléatoire immédiat dans
+    // l'équipe, plutôt que d'attendre le premier renouvellement pour avoir
+    // un responsable.
+    if (projectObj.rotateResponsible && (!projectObj.responsibleIds || projectObj.responsibleIds.length === 0) && (projectObj.teamIds || []).length > 0) {
+      const pool = shuffleArray(projectObj.teamIds);
+      projectObj.responsibleIds = [pool[0]];
+      projectObj.responsibleRotationPool = pool.slice(1);
+    }
     const governanceTasks = (isNew && genGovernance && form.startDate && form.endDate) ? buildGovernanceTasks(form.startDate, form.endDate, id, currentMemberId) : [];
     onSave(projectObj, governanceTasks);
   };

@@ -291,8 +291,8 @@ const ROW_MAPPERS = {
   },
   projects: {
     table: 'projects',
-    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, service: p.service || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null, responsible_id: p.responsibleId || null, rotate_responsible: !!p.rotateResponsible, responsible_rotation_pool: p.responsibleRotationPool || [] }),
-    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', service: r.service || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null, responsibleId: r.responsible_id || '', rotateResponsible: !!r.rotate_responsible, responsibleRotationPool: r.responsible_rotation_pool || [] }),
+    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, service: p.service || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null, responsible_ids: p.responsibleIds || [], rotate_responsible: !!p.rotateResponsible, responsible_rotation_pool: p.responsibleRotationPool || [], pending_approval: !!p.pendingApproval, created_by: p.createdBy || null }),
+    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', service: r.service || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null, responsibleIds: (r.responsible_ids && r.responsible_ids.length ? r.responsible_ids : (r.responsible_id ? [r.responsible_id] : [])), rotateResponsible: !!r.rotate_responsible, responsibleRotationPool: r.responsible_rotation_pool || [], pendingApproval: !!r.pending_approval, createdBy: r.created_by || '' }),
   },
   tasks: {
     table: 'tasks',
@@ -433,14 +433,15 @@ function canEditTask(t, memberId, project, isManager) {
   if (!t) return true; // nouvelle tâche : création ouverte à tous
   if (t.assigneeId === memberId) return true;
   if (t.raci && (t.raci[memberId] === 'R' || t.raci[memberId] === 'A')) return true;
-  if (project && project.responsibleId === memberId) return true;
+  if (project && (project.responsibleIds || []).includes(memberId)) return true;
   return false;
 }
-// Qui peut modifier un projet existant : son responsable, ou un administrateur.
+// Qui peut modifier un projet existant : un de ses responsables (il peut y
+// en avoir plusieurs), ou un administrateur.
 function canEditProject(p, memberId, isManager) {
   if (isManager) return true;
   if (!p) return true; // nouveau projet : création ouverte à tous
-  return p.responsibleId === memberId;
+  return (p.responsibleIds || []).includes(memberId);
 }
 
 function isTaskOfMine(t, memberId) {
@@ -1052,7 +1053,8 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 function ProjectModal({ project, members, externalContacts, tasks, currentMemberId, perm, onSave, onDelete, onClose }) {
   const isNew = !project;
   const locked = !canEditProject(project, currentMemberId, perm.isManager);
-  const [form, setForm] = useState(project || { name: '', description: '', service: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', repeatUnit: 'aucune', repeatEvery: 1, responsibleId: '', rotateResponsible: false, responsibleRotationPool: [] });
+  const [form, setForm] = useState(project || { name: '', description: '', service: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', repeatUnit: 'aucune', repeatEvery: 1, responsibleIds: [], rotateResponsible: false, responsibleRotationPool: [] });
+  const toggleResponsible = (id) => setForm(f => ({ ...f, responsibleIds: (f.responsibleIds || []).includes(id) ? f.responsibleIds.filter(x => x !== id) : [...(f.responsibleIds || []), id] }));
   const [genGovernance, setGenGovernance] = useState(false);
   const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
   const comboPoolGroups = combinedPoolGroups(members);
@@ -1062,12 +1064,29 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
   });
   const toggleExternal = (id) => setForm(f => ({ ...f, externalIds: (f.externalIds || []).includes(id) ? f.externalIds.filter(x => x !== id) : [...(f.externalIds || []), id] }));
 
+  // À la création, un utilisateur non-administrateur ne peut choisir que ses
+  // propres services (fiche collaborateur) — pas n'importe quel service du
+  // cabinet. Un administrateur, lui, choisit librement.
+  const currentMemberObj = members.find(m => m.id === currentMemberId);
+  const restrictServiceChoice = isNew && !perm.isManager;
+  const allowedServices = restrictServiceChoice
+    ? (currentMemberObj?.services?.length ? currentMemberObj.services : ['Autre'])
+    : PROJECT_SERVICES;
+
   const [outOfRangeWarning, setOutOfRangeWarning] = useState('');
   const doSave = () => {
     const id = form.id || uid();
     const projectObj = { ...form, id };
+    if (isNew) {
+      projectObj.createdBy = currentMemberId;
+      projectObj.pendingApproval = !perm.isManager;
+      if (!perm.isManager && (!projectObj.responsibleIds || projectObj.responsibleIds.length === 0)) projectObj.responsibleIds = [currentMemberId];
+    }
     const governanceTasks = (isNew && genGovernance && form.startDate && form.endDate) ? buildGovernanceTasks(form.startDate, form.endDate, id, currentMemberId) : [];
     onSave(projectObj, governanceTasks);
+  };
+  const validateProject = () => {
+    onSave({ ...form, pendingApproval: false }, []);
   };
   const handleSubmit = () => {
     const id = form.id || uid();
@@ -1086,12 +1105,21 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
   return (
     <Modal title={project ? 'Modifier le projet' : 'Nouveau projet'} onClose={onClose} wide>
       {locked && <ReadOnlyNotice />}
+      {form.pendingApproval && (
+        <div className="flex items-center justify-between gap-2 text-xs text-amber-800 bg-amber-50 px-3 py-2.5 rounded-lg mb-3.5 flex-wrap">
+          <span className="flex items-center gap-1.5"><AlertTriangle size={13} className="shrink-0" /> En attente de validation par un administrateur — le projet reste visible mais n'est pas encore confirmé.</span>
+          {perm.isManager && <button type="button" onClick={validateProject} className="bg-amber-600 hover:bg-amber-700 text-white font-medium px-2.5 py-1.5 rounded-lg shrink-0">Valider ce projet</button>}
+        </div>
+      )}
       <Field label="Nom du projet"><input disabled={locked} className={inputCls} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></Field>
       <Field label="Service du projet">
         <select disabled={locked} className={inputCls} value={form.service || ''} onChange={e => setForm({ ...form, service: e.target.value })}>
           <option value="">— aucun —</option>
-          {PROJECT_SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
+          {allowedServices.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        {restrictServiceChoice && (
+          <div className="text-[11px] text-slate-400 mt-1">Limité à {currentMemberObj?.services?.length ? 'votre/vos service(s)' : '"Autre"'} — un administrateur peut choisir n'importe quel service.</div>
+        )}
       </Field>
       <Field label="Description"><textarea disabled={locked} className={inputCls} rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></Field>
       <Field label="Couleur">
@@ -1161,15 +1189,23 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
             <div className="text-xs text-slate-400 mt-1.5 flex items-center gap-1"><Repeat size={11} /> {repeatLabel(form.repeatUnit, form.repeatEvery)} — dès que le projet passe à "Terminé", un nouveau projet (et ses tâches) est recréé automatiquement pour le cycle suivant.</div>
           )}
       </Field>
-      <Field label="Responsable du projet">
-        <select disabled={locked} className={inputCls} value={form.responsibleId || ''} onChange={e => setForm({ ...form, responsibleId: e.target.value })}>
-          <option value="">— aucun —</option>
-          {members.filter(m => form.teamIds.includes(m.id)).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-        </select>
+      <Field label="Responsable(s) du projet">
+        <div className="flex flex-wrap gap-1.5">
+          {members.filter(m => form.teamIds.includes(m.id)).map(m => {
+            const active = (form.responsibleIds || []).includes(m.id);
+            return (
+              <button key={m.id} type="button" disabled={locked} onClick={() => toggleResponsible(m.id)}
+                className={`text-xs px-2.5 py-1.5 rounded-full border flex items-center gap-1.5 disabled:opacity-40 ${active ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-500'}`}>
+                <Avatar name={m.name} size={16} /> {m.name}
+              </button>
+            );
+          })}
+          {form.teamIds.length === 0 && <span className="text-xs text-slate-400">Ajoutez d'abord des personnes à l'équipe affectée.</span>}
+        </div>
         {form.repeatUnit && form.repeatUnit !== 'aucune' && form.teamIds.length > 0 && (
           <label className="flex items-center gap-2 text-xs text-slate-600 mt-2.5">
             <input disabled={locked} type="checkbox" checked={!!form.rotateResponsible} onChange={e => setForm({ ...form, rotateResponsible: e.target.checked })} />
-            Le responsable du projet change à chaque renouvellement (tirage aléatoire dans l'équipe, sans repasser deux fois avant que tout le monde soit passé)
+            Le responsable change à chaque renouvellement (tirage aléatoire dans l'équipe, sans repasser deux fois avant que tout le monde soit passé{(form.responsibleIds || []).length > 1 ? ' — ne conservera qu\'une seule personne tirée au sort' : ''})
           </label>
         )}
       </Field>
@@ -1669,8 +1705,13 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
           {isProjectLate(g.project) && (
             <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-red-500 text-white flex items-center gap-1"><AlertTriangle size={10} /> En retard</span>
           )}
-          {g.project.responsibleId && (
-            <span className="text-[10px] text-white/80 flex items-center gap-1">Responsable : {members.find(m => m.id === g.project.responsibleId)?.name || '—'}</span>
+          {g.project.pendingApproval && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-amber-400 text-amber-950 flex items-center gap-1"><AlertTriangle size={10} /> En attente de validation</span>
+          )}
+          {(g.project.responsibleIds || []).length > 0 && (
+            <span className="text-[10px] text-white/80 flex items-center gap-1">
+              Responsable{g.project.responsibleIds.length > 1 ? 's' : ''} : {g.project.responsibleIds.map(id => members.find(m => m.id === id)?.name).filter(Boolean).join(', ') || '—'}
+            </span>
           )}
           {perm.canCreateProject && (
             <button onClick={() => editProject(g.project)} className="text-white/70 hover:text-white p-0.5" title="Modifier ou supprimer ce projet">
@@ -2403,10 +2444,16 @@ function ReferentApp({ session, onSignOut }) {
       if (m?.email) notifyByEmail([m.email], `Vous avez été affecté(e) au projet « ${project.name} »`,
         `<p>Bonjour ${m.name},</p><p>Vous avez été affecté(e) au projet <strong>${project.name}</strong>.</p>${project.description ? `<p>${project.description}</p>` : ''}`);
     });
-    if (project.responsibleId && project.responsibleId !== connectedAs) {
-      const rm = members.find(x => x.id === project.responsibleId);
+    (project.responsibleIds || []).filter(id => id !== connectedAs).forEach(id => {
+      const rm = members.find(x => x.id === id);
       if (rm?.email) notifyByEmail([rm.email], `Vous êtes responsable du projet « ${project.name} »`,
         `<p>Bonjour ${rm.name},</p><p>Vous êtes responsable du projet <strong>${project.name}</strong>.</p>`);
+    });
+    if (project.pendingApproval) {
+      const managerEmails = members.filter(m => m.accessLevel === 'manager' && m.email).map(m => m.email);
+      const creator = members.find(m => m.id === project.createdBy);
+      if (managerEmails.length) notifyByEmail(managerEmails, `Projet en attente de validation : ${project.name}`,
+        `<p>${creator?.name || 'Un utilisateur'} a créé le projet <strong>${project.name}</strong>, qui attend votre validation.</p>`);
     }
   };
 
@@ -2425,10 +2472,17 @@ function ReferentApp({ session, onSignOut }) {
       if (m?.email) notifyByEmail([m.email], `Vous avez été retiré(e) du projet « ${next.name} »`,
         `<p>Bonjour ${m.name},</p><p>Vous n'êtes plus affecté(e) au projet <strong>${next.name}</strong>.</p>`);
     });
-    if (next.responsibleId && next.responsibleId !== prev.responsibleId && next.responsibleId !== connectedAs) {
-      const rm = members.find(x => x.id === next.responsibleId);
+    const prevResponsibles = prev.responsibleIds || [];
+    const nextResponsibles = next.responsibleIds || [];
+    nextResponsibles.filter(id => !prevResponsibles.includes(id) && id !== connectedAs).forEach(id => {
+      const rm = members.find(x => x.id === id);
       if (rm?.email) notifyByEmail([rm.email], `Vous êtes responsable du projet « ${next.name} »`,
         `<p>Bonjour ${rm.name},</p><p>Vous êtes désormais responsable du projet <strong>${next.name}</strong>.</p>`);
+    });
+    if (prev.pendingApproval && !next.pendingApproval) {
+      const creator = members.find(m => m.id === next.createdBy);
+      if (creator?.email && creator.id !== connectedAs) notifyByEmail([creator.email], `Projet validé : ${next.name}`,
+        `<p>Bonjour ${creator.name},</p><p>Votre projet <strong>${next.name}</strong> a été validé par un administrateur.</p>`);
     }
     // Volontairement pas de notification sur les simples changements de dates/statut
     // du projet : pour ne pas surcharger les emails, on ne notifie que
@@ -2605,21 +2659,24 @@ function ReferentApp({ session, onSignOut }) {
     if (justCompleted && projectObj.repeatUnit && projectObj.repeatUnit !== 'aucune' && projectObj.startDate && projectObj.endDate) {
       const nextStart = shiftByRepeat(projectObj.startDate, projectObj.repeatUnit, projectObj.repeatEvery);
       const nextEnd = shiftByRepeat(projectObj.endDate, projectObj.repeatUnit, projectObj.repeatEvery);
-      let newResponsibleId = projectObj.responsibleId;
+      let newResponsibleIds = projectObj.responsibleIds || [];
       let newResponsibleRotationPool = projectObj.responsibleRotationPool || [];
-      if (projectObj.rotateResponsible && projectObj.responsibleId) {
-        const rotated = nextRotatedAssignee({ assigneeId: projectObj.responsibleId, rotationPool: projectObj.responsibleRotationPool }, projectObj.teamIds);
-        newResponsibleId = rotated.assigneeId;
+      if (projectObj.rotateResponsible && newResponsibleIds.length > 0) {
+        // La rotation ne gère qu'un seul poste tournant : s'il y avait
+        // plusieurs responsables fixes, le renouvellement n'en garde qu'un,
+        // tiré au sort (annoncé dans le libellé de la case à cocher).
+        const rotated = nextRotatedAssignee({ assigneeId: newResponsibleIds[0], rotationPool: projectObj.responsibleRotationPool }, projectObj.teamIds);
+        newResponsibleIds = [rotated.assigneeId];
         newResponsibleRotationPool = rotated.rotationPool;
       }
-      const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd, lateNotifiedAt: null, responsibleId: newResponsibleId, responsibleRotationPool: newResponsibleRotationPool };
+      const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd, lateNotifiedAt: null, responsibleIds: newResponsibleIds, responsibleRotationPool: newResponsibleRotationPool };
       setProjects(prev => [...prev, newProject]);
       await upsertRow('projects', newProject);
-      if (newProject.responsibleId && newProject.responsibleId !== projectObj.responsibleId) {
-        const rm = members.find(x => x.id === newProject.responsibleId);
+      newResponsibleIds.filter(id => !(projectObj.responsibleIds || []).includes(id)).forEach(id => {
+        const rm = members.find(x => x.id === id);
         if (rm?.email) notifyByEmail([rm.email], `Vous êtes responsable du projet « ${newProject.name} »`,
           `<p>Bonjour ${rm.name},</p><p>Vous êtes désormais responsable du projet <strong>${newProject.name}</strong> pour ce cycle (${fmtDateLong(newProject.startDate)} → ${fmtDateLong(newProject.endDate)}).</p>`);
-      }
+      });
 
       const oldTasks = tasks.filter(t => t.projectId === projectObj.id);
       const clonedTasks = oldTasks.map(t => {

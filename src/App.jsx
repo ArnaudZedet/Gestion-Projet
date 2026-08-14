@@ -2711,7 +2711,7 @@ function ReferentApp({ session, onSignOut }) {
       }
       const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd, lateNotifiedAt: null, responsibleIds: newResponsibleIds, responsibleRotationPool: newResponsibleRotationPool };
       setProjects(prev => [...prev, newProject]);
-      await upsertRow('projects', newProject);
+      warnIfFailed(await upsertRow('projects', newProject), 'Le renouvellement du projet');
       newResponsibleIds.filter(id => !(projectObj.responsibleIds || []).includes(id)).forEach(id => {
         const rm = members.find(x => x.id === id);
         if (rm?.email) notifyByEmail([rm.email], `Vous êtes responsable du projet « ${newProject.name} »`,
@@ -2738,7 +2738,7 @@ function ReferentApp({ session, onSignOut }) {
       });
       if (clonedTasks.length) {
         setTasks(prev => [...prev, ...clonedTasks]);
-        await insertRows('tasks', clonedTasks);
+        warnIfFailed(await insertRows('tasks', clonedTasks), 'Les tâches du nouveau cycle');
         oldTasks.forEach((t, i) => notifyTaskAssignment(t, clonedTasks[i]));
       }
     }

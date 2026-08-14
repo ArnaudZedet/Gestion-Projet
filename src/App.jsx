@@ -2335,7 +2335,7 @@ function FeedbackView({ currentMember, onSend }) {
 function navFor(perm) {
   const nav = [];
   if (perm.isManager) nav.push({ id: 'dashboard', label: "Vue d'ensemble", Icon: LayoutDashboard, accent: '#60A5FA' });
-  nav.push({ id: 'tasks', label: perm.isManager ? 'Tâches' : 'Mes tâches', Icon: ListChecks, accent: '#818CF8' });
+  nav.push({ id: 'tasks', label: perm.isManager ? 'Tâches et projets' : 'Mes tâches et projets', Icon: ListChecks, accent: '#818CF8' });
   nav.push({ id: 'planning', label: 'Planning', Icon: CalendarDays, accent: '#38BDF8' });
   if (perm.isReferent) {
     nav.push({ id: 'gantt', label: 'Durée des projets', Icon: GanttChartSquare, accent: '#A78BFA' });

@@ -862,14 +862,16 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
 
       <div className="grid grid-cols-2 gap-3">
         <Field label="Priorité (urgence)">
-          <select disabled={locked} className={inputCls} value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })}>
+          <select disabled={locked || !perm.isManager} className={inputCls} value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })}>
             {PRIORITIES.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
           </select>
+          {!perm.isManager && <div className="text-[11px] text-slate-400 mt-1">Réservé aux administrateurs</div>}
         </Field>
         <Field label="Importance (impact)">
-          <select disabled={locked} className={inputCls} value={form.importance} onChange={e => setForm({ ...form, importance: e.target.value })}>
+          <select disabled={locked || !perm.isManager} className={inputCls} value={form.importance} onChange={e => setForm({ ...form, importance: e.target.value })}>
             {IMPORTANCE.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
           </select>
+          {!perm.isManager && <div className="text-[11px] text-slate-400 mt-1">Réservé aux administrateurs</div>}
         </Field>
       </div>
       <div className="grid grid-cols-2 gap-3">

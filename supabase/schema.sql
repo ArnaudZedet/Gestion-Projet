@@ -15,6 +15,7 @@ create table if not exists members (
   email text,
   access_level text not null default 'utilisateur',
   external boolean not null default false,
+  always_approver boolean not null default false,
   updated_at timestamptz not null default now()
 );
 

@@ -285,8 +285,8 @@ const d = (v) => (v ? v : null); // '' -> null pour les colonnes date
 const ROW_MAPPERS = {
   members: {
     table: 'members',
-    toRow: (m) => ({ id: m.id, name: m.name, role: m.role || null, services: m.services || [], email: m.email || null, access_level: m.accessLevel, external: !!m.external }),
-    fromRow: (r) => ({ id: r.id, name: r.name, role: r.role || '', services: r.services || [], email: r.email || '', accessLevel: r.access_level, external: !!r.external }),
+    toRow: (m) => ({ id: m.id, name: m.name, role: m.role || null, services: m.services || [], email: m.email || null, access_level: m.accessLevel, external: !!m.external, always_approver: !!m.alwaysApprover }),
+    fromRow: (r) => ({ id: r.id, name: r.name, role: r.role || '', services: r.services || [], email: r.email || '', accessLevel: r.access_level, external: !!r.external, alwaysApprover: !!r.always_approver }),
   },
   projects: {
     table: 'projects',
@@ -731,18 +731,22 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
     }));
   };
 
+  // Une personne "toujours approbatrice" démarre au rôle "A" plutôt que "I"
+  // quand on l'ajoute — cohérent avec le fait qu'elle ne sera jamais tirée
+  // au sort comme responsable (voir nextRotatedAssignee).
+  const defaultRaciRole = (id) => (members.find(m => m.id === id)?.alwaysApprover ? 'A' : 'I');
   const toggleParticipant = (id) => setForm(f => {
     if (f.assignMode === 'pool') {
       return { ...f, pool: f.pool.includes(id) ? f.pool.filter(x => x !== id) : [...f.pool, id] };
     }
     const raci = { ...f.raci };
-    if (raci[id]) delete raci[id]; else raci[id] = 'I';
+    if (raci[id]) delete raci[id]; else raci[id] = defaultRaciRole(id);
     return { ...f, raci };
   });
   const selectAllParticipants = () => setForm(f => {
     if (f.assignMode === 'pool') return { ...f, pool: availableMembers.map(m => m.id) };
     const raci = { ...f.raci };
-    availableMembers.forEach(m => { if (!raci[m.id]) raci[m.id] = 'I'; });
+    availableMembers.forEach(m => { if (!raci[m.id]) raci[m.id] = defaultRaciRole(m.id); });
     return { ...f, raci };
   });
   const clearAllParticipants = () => setForm(f => f.assignMode === 'pool' ? { ...f, pool: [] } : { ...f, raci: {} });
@@ -754,7 +758,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
     }
     const raci = { ...f.raci };
     const allIn = ids.every(id => raci[id]);
-    if (allIn) ids.forEach(id => delete raci[id]); else ids.forEach(id => { if (!raci[id]) raci[id] = 'I'; });
+    if (allIn) ids.forEach(id => delete raci[id]); else ids.forEach(id => { if (!raci[id]) raci[id] = defaultRaciRole(id); });
     return { ...f, raci };
   });
   const setRaciRole = (id, role) => setForm(f => {
@@ -991,7 +995,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
 /* ---------------------------------------------------------------------- */
 
 function MemberModal({ member, onSave, onDelete, onClose }) {
-  const [form, setForm] = useState(member || { name: '', role: '', services: [], accessLevel: 'utilisateur', email: '' });
+  const [form, setForm] = useState(member || { name: '', role: '', services: [], accessLevel: 'utilisateur', email: '', alwaysApprover: false });
   const [roleChoice, setRoleChoice] = useState(FUNCTIONS.includes(member?.role) ? member.role : (member?.role ? 'Autre' : ''));
   const toggleService = (s) => setForm(f => ({ ...f, services: (f.services || []).includes(s) ? f.services.filter(x => x !== s) : [...(f.services || []), s] }));
   return (
@@ -1027,6 +1031,12 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
         </Field>
       </div>
       <Field label="Email (compte de connexion)"><input type="email" className={inputCls} value={form.email || ''} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="prenom.nom@cabinet.fr" /></Field>
+      <Field label="Rôle sur les projets/tâches">
+        <label className="flex items-center gap-2 text-xs text-slate-600">
+          <input type="checkbox" checked={!!form.alwaysApprover} onChange={e => setForm({ ...form, alwaysApprover: e.target.checked })} />
+          Toujours approbateur, jamais responsable (y compris en cas de tirage aléatoire)
+        </label>
+      </Field>
       <Field label="Rôle applicatif (droits d'accès)">
         <select className={inputCls} value={form.accessLevel} onChange={e => setForm({ ...form, accessLevel: e.target.value })}>
           {ACCESS_LEVELS.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
@@ -2538,7 +2548,10 @@ function ReferentApp({ session, onSignOut }) {
   // rotationPool = les personnes qui n'ont pas encore été tirées dans le
   // cycle en cours ; vide → on démarre un nouveau cycle (nouveau tirage).
   const nextRotatedAssignee = (t, teamOverride) => {
-    const team = teamOverride || projects.find(p => p.id === t.projectId)?.teamIds || [];
+    const rawTeam = teamOverride || projects.find(p => p.id === t.projectId)?.teamIds || [];
+    // Certaines personnes (toujours approbatrices) ne doivent jamais être
+    // tirées au sort comme responsable, même en rotation aléatoire.
+    const team = rawTeam.filter(id => !members.find(m => m.id === id)?.alwaysApprover);
     if (team.length === 0) return { assigneeId: t.assigneeId, rotationPool: [] };
     let pool = (t.rotationPool || []).filter(id => team.includes(id));
     if (pool.length === 0) {

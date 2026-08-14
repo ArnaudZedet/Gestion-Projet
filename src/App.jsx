@@ -1643,18 +1643,23 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
   const [query, setQuery] = useState('');
   const selectCls = "border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 bg-white focus:outline-none";
 
-  // Rôles des personnes impliquées dans une tâche (responsable, pool, RACI),
-  // pour le filtre "Manipulateurs" / "Secrétaires" ci-dessous.
-  const rolesOfTask = (t) => {
-    const ids = new Set([t.assigneeId, ...(t.pool || []), ...Object.keys(t.raci || {})].filter(Boolean));
-    return [...ids].map(id => members.find(m => m.id === id)?.role).filter(Boolean);
-  };
-  const matchesTeam = (t) => {
+  // Filtre "Manipulateurs" / "Secrétaires" : sur l'équipe affectée au projet
+  // (teamIds), pas sur telle ou telle tâche — un projet dont l'équipe compte
+  // au moins un manipulateur (ou une secrétaire) reste visible avec toutes
+  // ses tâches. Pour les tâches sans projet, on retombe sur les personnes
+  // impliquées dans la tâche elle-même.
+  const rolesOf = (ids) => (ids || []).map(id => members.find(m => m.id === id)?.role).filter(Boolean);
+  const matchesTeamRoles = (roles) => {
     if (filterTeam === 'all') return true;
-    const roles = rolesOfTask(t);
     if (filterTeam === 'manip') return roles.some(r => r === 'Manipulateur' || r === 'Aide manipulateur');
     if (filterTeam === 'secretaire') return roles.some(r => r === 'Secrétaire');
     return true;
+  };
+  const projectMatchesTeam = (p) => matchesTeamRoles(rolesOf(p?.teamIds));
+  const matchesTeam = (t) => {
+    if (filterTeam === 'all') return true;
+    const ids = [t.assigneeId, ...(t.pool || []), ...Object.keys(t.raci || {})].filter(Boolean);
+    return matchesTeamRoles(rolesOf(ids));
   };
 
   // tasks/projects arrivent déjà bornés à l'équipe de l'utilisateur pour les non-managers
@@ -1667,11 +1672,10 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
     (filterMember === 'all' || t.assigneeId === filterMember || (t.raci && t.raci[filterMember]) || (t.pool && t.pool.includes(filterMember))) &&
     (filterProject === 'all' || t.projectId === filterProject) &&
     (filterStatus === 'all' || t.status === filterStatus) &&
-    matchesTeam(t) &&
     t.title.toLowerCase().includes(query.toLowerCase())
   );
 
-  const visibleProjects = projects;
+  const visibleProjects = projects.filter(projectMatchesTeam);
   const byDeadline = (a, b) => {
     if (!a.deadline && !b.deadline) return 0;
     if (!a.deadline) return 1;
@@ -1683,7 +1687,7 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
   const projectGroups = grouped
     ? visibleProjects.map(p => ({ project: p, items: filtered.filter(t => t.projectId === p.id).sort(byDeadline) })).filter(g => g.items.length > 0)
     : [{ project: projects.find(p => p.id === filterProject), items: [...filtered].sort(byDeadline) }];
-  const noProject = filtered.filter(t => !projects.some(p => p.id === t.projectId)).sort(byDeadline);
+  const noProject = filtered.filter(t => !projects.some(p => p.id === t.projectId) && matchesTeam(t)).sort(byDeadline);
   const noProjectGroup = grouped && noProject.length ? { project: { id: '_none', name: 'Sans projet', color: '#94A3B8' }, items: noProject } : null;
 
   // Regroupement par service (couleur dominante), puis par ordre chronologique

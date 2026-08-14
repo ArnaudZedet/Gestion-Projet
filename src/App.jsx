@@ -2759,6 +2759,18 @@ function ReferentApp({ session, onSignOut }) {
           const { raci, rotationPool } = rotateRaciResponsible(t, newProject.teamIds);
           clone.raci = raci;
           clone.rotationPool = rotationPool;
+        } else if (t.assignMode === 'individuel' && newResponsibleIds[0] && t.assigneeId && (projectObj.responsibleIds || []).includes(t.assigneeId)) {
+          // Pas de rotation propre à la tâche : si elle était assignée à
+          // l'ancien responsable du projet, elle suit le nouveau.
+          clone.assigneeId = newResponsibleIds[0];
+        } else if (t.assignMode === 'equipe' && newResponsibleIds[0]) {
+          const currentR = Object.entries(t.raci || {}).find(([, r]) => r === 'R')?.[0] || '';
+          if (currentR && (projectObj.responsibleIds || []).includes(currentR)) {
+            const raci = { ...(t.raci || {}) };
+            Object.keys(raci).forEach(id => { if (raci[id] === 'R') delete raci[id]; });
+            raci[newResponsibleIds[0]] = 'R';
+            clone.raci = raci;
+          }
         }
         return clone;
       });

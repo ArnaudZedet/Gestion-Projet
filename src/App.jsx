@@ -26,11 +26,13 @@ const STATUSES = [
   { id: 'termine',  label: 'Terminé',  color: '#127A45', bg: '#D8F4E4' },
 ];
 
-// Trois niveaux : Manager (tous droits), Référent (gère ses projets), Utilisateur (lecture + demandes)
+// Deux niveaux : Administrateur (tous droits) et Utilisateur (peut créer des
+// tâches/projets/RDV, gérer le RACI et le planning ; la modification d'une
+// tâche ou d'un projet existant reste réservée à son responsable, à
+// l'approbateur RACI, ou à un administrateur — voir permissionsFor).
 const ACCESS_LEVELS = [
-  { id: 'manager',     label: 'Manager',     desc: 'Accès total : équipe, contacts, tous les projets, toutes les tâches' },
-  { id: 'referent',    label: 'Référent',    desc: 'Peut créer des tâches et RDV, gérer le RACI et le planning de ses projets' },
-  { id: 'utilisateur', label: 'Utilisateur', desc: "Voit ses tâches et le planning, peut faire des demandes de tâche/RDV" },
+  { id: 'manager',     label: 'Administrateur', desc: 'Accès total : équipe, contacts, tous les projets, toutes les tâches' },
+  { id: 'utilisateur', label: 'Utilisateur',    desc: "Peut créer des tâches, projets et RDV ; modifier une tâche/un projet existant reste réservé au responsable, à l'approbateur ou à un administrateur" },
 ];
 
 const RACI_LEVELS = [
@@ -402,19 +404,43 @@ function warnIfFailed(ok, action) {
 
 function permissionsFor(accessLevel) {
   const isManager = accessLevel === 'manager';
-  const isReferent = accessLevel === 'referent' || isManager;
   return {
-    accessLevel, isManager, isReferent,
+    // isReferent gardé à true pour tout le monde : l'ancien rôle "référent"
+    // a été fusionné dans "utilisateur" (mêmes droits de création/vue), seule
+    // la distinction manager/non-manager compte encore pour la portée
+    // globale. La modification d'une tâche/projet EXISTANT(E), elle, est
+    // maintenant tranchée au cas par cas (voir canEditTask/canEditProject
+    // dans TaskModal/ProjectModal), pas par ce rôle.
+    accessLevel, isManager, isReferent: true,
     canManageTeam: isManager,
     canManageContacts: isManager,
     canSeeOverview: isManager,
     canSeeAllTasks: isManager,
-    canCreateTask: isReferent,
-    canCreateProject: isReferent,
-    canManageAppointments: isReferent,
-    canEditRaci: isReferent,
+    canCreateTask: true,
+    canCreateProject: true,
+    canManageAppointments: true,
+    canEditRaci: true,
     canReviewRequests: isManager,
   };
+}
+
+// Qui peut modifier une tâche existante : son responsable (assigné en mode
+// individuel, ou rôle RACI "R"/"A" en mode équipe), le responsable du projet
+// qui la contient, ou un administrateur. Les autres (informés, consultés,
+// candidats d'un pool pas encore pris, non impliqués) sont en lecture seule.
+function canEditTask(t, memberId, project, isManager) {
+  if (isManager) return true;
+  if (!t) return true; // nouvelle tâche : création ouverte à tous
+  if (t.assigneeId === memberId) return true;
+  if (t.raci && (t.raci[memberId] === 'R' || t.raci[memberId] === 'A')) return true;
+  if (project && project.responsibleId === memberId) return true;
+  return false;
+}
+// Qui peut modifier un projet existant : son responsable, ou un administrateur.
+function canEditProject(p, memberId, isManager) {
+  if (isManager) return true;
+  if (!p) return true; // nouveau projet : création ouverte à tous
+  return p.responsibleId === memberId;
 }
 
 function isTaskOfMine(t, memberId) {
@@ -473,8 +499,10 @@ function ScopeTag({ id }) {
   return <span className="px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap bg-slate-100 text-slate-500 border border-slate-200">{v.short}</span>;
 }
 function RoleTag({ id }) {
-  const r = ACCESS_LEVELS.find(x => x.id === id) || ACCESS_LEVELS[2];
-  const styles = { manager: { c: '#B42318', b: '#FEE4E2' }, referent: { c: '#1849A9', b: '#DBE7FE' }, utilisateur: { c: '#475467', b: '#F1F2F4' } };
+  // Repli sur "utilisateur" : couvre aussi les fiches enregistrées avant la
+  // fusion du rôle "référent" dans "utilisateur" (id encore présent en base).
+  const r = ACCESS_LEVELS.find(x => x.id === id) || ACCESS_LEVELS[1];
+  const styles = { manager: { c: '#B42318', b: '#FEE4E2' }, utilisateur: { c: '#475467', b: '#F1F2F4' } };
   const s = styles[id] || styles.utilisateur;
   return <span style={{ color: s.c, background: s.b }} className="px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap">{r.label}</span>;
 }
@@ -519,7 +547,7 @@ function EmptyState({ icon: Icon, title, subtitle }) {
 function ReadOnlyNotice() {
   return (
     <div className="flex items-center gap-1.5 text-xs text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg mb-3.5">
-      <Lock size={12} /> Lecture seule pour votre rôle
+      <Lock size={12} /> Lecture seule — modification réservée aux personnes autorisées
     </div>
   );
 }
@@ -676,12 +704,9 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
 
   const isOpenPoolTask = task && form.assignMode === 'pool' && task.pool && task.pool.length > 0 && !task.assigneeId;
   const canClaim = isOpenPoolTask && task.pool.includes(currentMemberId);
-  const isOwn = task && isTaskOfMine(task, currentMemberId);
-  const fullyLocked = task && perm.accessLevel === 'utilisateur' && !isOwn;
-  const statusOnly = task && perm.accessLevel === 'utilisateur' && isOwn;
-  const locked = fullyLocked || statusOnly;
-
   const currentProject = projects.find(p => p.id === form.projectId);
+  const locked = task && !canEditTask(task, currentMemberId, currentProject, perm.isManager);
+
   const projectTeamIds = currentProject?.teamIds || [];
   const availableMembers = projectTeamIds.length > 0 ? members.filter(m => projectTeamIds.includes(m.id)) : members;
   const projectHasOwnRepeat = !!(currentProject?.repeatUnit && currentProject.repeatUnit !== 'aucune');
@@ -854,7 +879,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
           </select>
         </Field>
         <Field label="Statut">
-          <select disabled={fullyLocked} className={inputCls} value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+          <select disabled={locked} className={inputCls} value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
             {STATUSES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>
         </Field>
@@ -924,10 +949,10 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
 
       <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
         <div className="flex items-center gap-2">
-          {task && !fullyLocked && (
-            <ConfirmButton onConfirm={() => onDelete(task.id)} disabled={statusOnly} confirmLabel="Supprimer cette tâche ?" />
+          {task && !locked && (
+            <ConfirmButton onConfirm={() => onDelete(task.id)} confirmLabel="Supprimer cette tâche ?" />
           )}
-          {task && perm.canCreateTask && !fullyLocked && (
+          {task && perm.canCreateTask && !locked && (
             <button onClick={() => onDuplicate(task)} className="text-slate-500 hover:bg-slate-50 text-sm font-medium px-3 py-2 rounded-lg flex items-center gap-1.5">
               <Copy size={14} /> Dupliquer
             </button>
@@ -939,7 +964,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
               <Users size={14} /> Prendre cette tâche
             </button>
           )}
-          {!fullyLocked && (
+          {!locked && (
             <button
               disabled={!form.title.trim()}
               onClick={() => onSave({
@@ -1022,8 +1047,9 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 /*  Fiche projet — création avec équipe + conduite de projet automatique  */
 /* ---------------------------------------------------------------------- */
 
-function ProjectModal({ project, members, externalContacts, tasks, currentMemberId, onSave, onDelete, onClose }) {
+function ProjectModal({ project, members, externalContacts, tasks, currentMemberId, perm, onSave, onDelete, onClose }) {
   const isNew = !project;
+  const locked = !canEditProject(project, currentMemberId, perm.isManager);
   const [form, setForm] = useState(project || { name: '', description: '', service: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', repeatUnit: 'aucune', repeatEvery: 1, responsibleId: '', rotateResponsible: false, responsibleRotationPool: [] });
   const [genGovernance, setGenGovernance] = useState(false);
   const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
@@ -1057,32 +1083,33 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
 
   return (
     <Modal title={project ? 'Modifier le projet' : 'Nouveau projet'} onClose={onClose} wide>
-      <Field label="Nom du projet"><input className={inputCls} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></Field>
+      {locked && <ReadOnlyNotice />}
+      <Field label="Nom du projet"><input disabled={locked} className={inputCls} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></Field>
       <Field label="Service du projet">
-        <select className={inputCls} value={form.service || ''} onChange={e => setForm({ ...form, service: e.target.value })}>
+        <select disabled={locked} className={inputCls} value={form.service || ''} onChange={e => setForm({ ...form, service: e.target.value })}>
           <option value="">— aucun —</option>
           {PROJECT_SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
       </Field>
-      <Field label="Description"><textarea className={inputCls} rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></Field>
+      <Field label="Description"><textarea disabled={locked} className={inputCls} rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></Field>
       <Field label="Couleur">
         <div className="flex gap-2">
           {PROJECT_COLORS.map(c => (
-            <button key={c} onClick={() => setForm({ ...form, color: c })} style={{ background: c }}
-              className={`w-7 h-7 rounded-full ${form.color === c ? 'ring-2 ring-offset-2 ring-slate-400' : ''}`} />
+            <button key={c} disabled={locked} onClick={() => setForm({ ...form, color: c })} style={{ background: c }}
+              className={`w-7 h-7 rounded-full disabled:opacity-40 ${form.color === c ? 'ring-2 ring-offset-2 ring-slate-400' : ''}`} />
           ))}
         </div>
       </Field>
       <Field label="Équipe affectée">
         <div className="space-y-1.5 mb-2">
-          <PoolButtonRow label="Pôles" groups={comboPoolGroups} isSelected={id => form.teamIds.includes(id)} onToggle={togglePool} />
+          <PoolButtonRow label="Pôles" groups={comboPoolGroups} isSelected={id => form.teamIds.includes(id)} onToggle={togglePool} disabled={locked} />
         </div>
         <div className="flex flex-wrap gap-1.5">
           {members.map(m => {
             const active = form.teamIds.includes(m.id);
             return (
-              <button key={m.id} type="button" onClick={() => toggleTeam(m.id)}
-                className={`text-xs px-2.5 py-1.5 rounded-full border flex items-center gap-1.5 ${active ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-500'}`}>
+              <button key={m.id} type="button" disabled={locked} onClick={() => toggleTeam(m.id)}
+                className={`text-xs px-2.5 py-1.5 rounded-full border flex items-center gap-1.5 disabled:opacity-40 ${active ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-500'}`}>
                 <Avatar name={m.name} size={16} /> {m.name}
               </button>
             );
@@ -1094,8 +1121,8 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
           {(externalContacts || []).map(c => {
             const active = (form.externalIds || []).includes(c.id);
             return (
-              <button key={c.id} type="button" onClick={() => toggleExternal(c.id)}
-                className={`text-xs px-2.5 py-1.5 rounded-full border flex items-center gap-1.5 ${active ? 'bg-purple-50 border-purple-200 text-purple-700' : 'bg-white border-slate-200 text-slate-500'}`}>
+              <button key={c.id} type="button" disabled={locked} onClick={() => toggleExternal(c.id)}
+                className={`text-xs px-2.5 py-1.5 rounded-full border flex items-center gap-1.5 disabled:opacity-40 ${active ? 'bg-purple-50 border-purple-200 text-purple-700' : 'bg-white border-slate-200 text-slate-500'}`}>
                 <Building2 size={12} /> {c.name}
               </button>
             );
@@ -1105,24 +1132,24 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
       </Field>
       <Field label="Statut du projet">
         <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
-          <button type="button" onClick={() => setForm({ ...form, status: 'en_cours' })} className={`flex-1 py-2 ${(!form.status || form.status === 'en_cours') ? 'bg-blue-600 text-white' : 'bg-white text-slate-500'}`}>En cours</button>
-          <button type="button" onClick={() => setForm({ ...form, status: 'termine' })} className={`flex-1 py-2 ${form.status === 'termine' ? 'bg-green-600 text-white' : 'bg-white text-slate-500'}`}>Terminé</button>
+          <button type="button" disabled={locked} onClick={() => setForm({ ...form, status: 'en_cours' })} className={`flex-1 py-2 disabled:opacity-60 ${(!form.status || form.status === 'en_cours') ? 'bg-blue-600 text-white' : 'bg-white text-slate-500'}`}>En cours</button>
+          <button type="button" disabled={locked} onClick={() => setForm({ ...form, status: 'termine' })} className={`flex-1 py-2 disabled:opacity-60 ${form.status === 'termine' ? 'bg-green-600 text-white' : 'bg-white text-slate-500'}`}>Terminé</button>
         </div>
       </Field>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Début du projet"><input type="date" min={form.id ? undefined : todayISO()} className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} /></Field>
-        <Field label="Fin du projet"><input type="date" min={form.startDate || undefined} className={inputCls} value={form.endDate || ''} onChange={e => setForm({ ...form, endDate: e.target.value })} /></Field>
+        <Field label="Début du projet"><input disabled={locked} type="date" min={form.id ? undefined : todayISO()} className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} /></Field>
+        <Field label="Fin du projet"><input disabled={locked} type="date" min={form.startDate || undefined} className={inputCls} value={form.endDate || ''} onChange={e => setForm({ ...form, endDate: e.target.value })} /></Field>
       </div>
       <div className="text-xs text-slate-400 -mt-2.5 mb-3.5">Ces deux dates forment le calendrier du projet : les tâches créées dedans ne pourront pas avoir de date en dehors.</div>
       <Field label="Répétition du projet">
         <div className="grid grid-cols-2 gap-3">
-          <select disabled={!form.startDate || !form.endDate} className={inputCls} value={form.repeatUnit || 'aucune'} onChange={e => setForm({ ...form, repeatUnit: e.target.value })}>
+          <select disabled={locked || !form.startDate || !form.endDate} className={inputCls} value={form.repeatUnit || 'aucune'} onChange={e => setForm({ ...form, repeatUnit: e.target.value })}>
             {REPEAT_UNITS.map(u => <option key={u.id} value={u.id}>{u.label}</option>)}
           </select>
           {form.repeatUnit && form.repeatUnit !== 'aucune' && (
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400 shrink-0">Tous les</span>
-              <input type="number" min="1" className={inputCls} value={form.repeatEvery || 1} onChange={e => setForm({ ...form, repeatEvery: Math.max(1, parseInt(e.target.value) || 1) })} />
+              <input disabled={locked} type="number" min="1" className={inputCls} value={form.repeatEvery || 1} onChange={e => setForm({ ...form, repeatEvery: Math.max(1, parseInt(e.target.value) || 1) })} />
             </div>
           )}
         </div>
@@ -1133,13 +1160,13 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
           )}
       </Field>
       <Field label="Responsable du projet">
-        <select className={inputCls} value={form.responsibleId || ''} onChange={e => setForm({ ...form, responsibleId: e.target.value })}>
+        <select disabled={locked} className={inputCls} value={form.responsibleId || ''} onChange={e => setForm({ ...form, responsibleId: e.target.value })}>
           <option value="">— aucun —</option>
           {members.filter(m => form.teamIds.includes(m.id)).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
         </select>
         {form.repeatUnit && form.repeatUnit !== 'aucune' && form.teamIds.length > 0 && (
           <label className="flex items-center gap-2 text-xs text-slate-600 mt-2.5">
-            <input type="checkbox" checked={!!form.rotateResponsible} onChange={e => setForm({ ...form, rotateResponsible: e.target.checked })} />
+            <input disabled={locked} type="checkbox" checked={!!form.rotateResponsible} onChange={e => setForm({ ...form, rotateResponsible: e.target.checked })} />
             Le responsable du projet change à chaque renouvellement (tirage aléatoire dans l'équipe, sans repasser deux fois avant que tout le monde soit passé)
           </label>
         )}
@@ -1162,7 +1189,7 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
         </div>
       )}
       <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
-        {project ? (
+        {project && !locked ? (
           <ConfirmButton
             onConfirm={() => onDelete(project.id)}
             confirmLabel={(() => {
@@ -1171,9 +1198,11 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
             })()}
           />
         ) : <span />}
-        <button disabled={!form.name.trim() || !form.startDate || !form.endDate} onClick={handleSubmit} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
-          {project ? 'Enregistrer' : 'Créer le projet'}
-        </button>
+        {!locked && (
+          <button disabled={!form.name.trim() || !form.startDate || !form.endDate} onClick={handleSubmit} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
+            {project ? 'Enregistrer' : 'Créer le projet'}
+          </button>
+        )}
       </div>
     </Modal>
   );
@@ -2065,7 +2094,7 @@ function GanttView({ tasks, projects, members, openTask }) {
 /*  Rôle des participants (ex-RACI)                                       */
 /* ---------------------------------------------------------------------- */
 
-function RaciView({ tasks, projects, members, perm, updateRaci }) {
+function RaciView({ tasks, projects, members, perm, currentMemberId, updateRaci }) {
   const [filterProject, setFilterProject] = useState(projects[0]?.id || 'all');
   const list = tasks.filter(t => filterProject === 'all' || t.projectId === filterProject);
   const participantIds = new Set();
@@ -2074,8 +2103,12 @@ function RaciView({ tasks, projects, members, perm, updateRaci }) {
   const relevantProjectIds = filterProject === 'all' ? new Set(projects.map(p => p.id)) : new Set([filterProject]);
   const projectMembers = members.filter(m => teamOfProjects(relevantProjectIds, tasks, projects).has(m.id));
   const visibleMembers = actualParticipants.length > 0 ? actualParticipants : (projectMembers.length > 0 ? projectMembers : members);
+  // Même règle que dans la fiche tâche : seul le responsable, l'approbateur
+  // RACI, le responsable du projet ou un administrateur peut modifier —
+  // évalué ligne par ligne puisque ça dépend de chaque tâche.
+  const canEditRow = (t) => canEditTask(t, currentMemberId, projects.find(p => p.id === t.projectId), perm.isManager);
   const cycle = (task, memberId) => {
-    if (!perm.canEditRaci) return;
+    if (!canEditRow(task)) return;
     const current = task.raci?.[memberId] || '';
     const next = RACI_CYCLE[(RACI_CYCLE.indexOf(current) + 1) % RACI_CYCLE.length];
     const raci = { ...(task.raci || {}) };
@@ -2088,10 +2121,9 @@ function RaciView({ tasks, projects, members, perm, updateRaci }) {
         <select className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 bg-white focus:outline-none" value={filterProject} onChange={e => setFilterProject(e.target.value)}>
           <option value="all">Toutes les tâches</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <div className="text-xs text-slate-400">Modifiable directement ici, ou depuis la fiche de chaque tâche (mode "Équipe")</div>
+        <div className="text-xs text-slate-400">Modifiable ici (ou depuis la fiche tâche) par le responsable, l'approbateur, le responsable du projet ou un administrateur</div>
         <div className="flex gap-3 text-xs text-slate-400 ml-auto">{RACI_LEVELS.map(r => <div key={r.id} className="flex items-center gap-1.5"><span style={{ background: r.bg, color: r.color }} className="w-4 h-4 rounded flex items-center justify-center text-[10px] font-bold">{r.id}</span>{r.label}</div>)}</div>
       </div>
-      {!perm.canEditRaci && <ReadOnlyNotice />}
       {list.length === 0 ? <EmptyState icon={Grid3x3} title="Aucune tâche" /> : (
         <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
           <table className="text-sm min-w-full">
@@ -2108,10 +2140,11 @@ function RaciView({ tasks, projects, members, perm, updateRaci }) {
                   {visibleMembers.map(m => {
                     const v = t.raci?.[m.id] || '';
                     const lvl = RACI_LEVELS.find(r => r.id === v);
+                    const editable = canEditRow(t);
                     return (
                       <td key={m.id} className="px-2 py-2 text-center">
-                        <button disabled={!perm.canEditRaci} onClick={() => cycle(t, m.id)} style={lvl ? { background: lvl.bg, color: lvl.color } : {}}
-                          className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center mx-auto ${!lvl ? 'bg-slate-50 text-slate-300' : ''} ${perm.canEditRaci ? 'hover:brightness-95 cursor-pointer' : 'cursor-default'}`}>{v || '·'}</button>
+                        <button disabled={!editable} onClick={() => cycle(t, m.id)} style={lvl ? { background: lvl.bg, color: lvl.color } : {}}
+                          className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center mx-auto ${!lvl ? 'bg-slate-50 text-slate-300' : ''} ${editable ? 'hover:brightness-95 cursor-pointer' : 'cursor-default'}`}>{v || '·'}</button>
                       </td>
                     );
                   })}
@@ -2793,7 +2826,7 @@ function ReferentApp({ session, onSignOut }) {
           {view === 'tasks' && <TasksView tasks={scopedTasks} members={members} projects={scopedProjects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={(projectId) => setTaskModal({ task: null, presetProjectId: projectId })} newProject={() => setProjectModal({ project: null })} editProject={(p) => setProjectModal({ project: p })} />}
           {view === 'planning' && <PlanningView members={members} tasks={scopedTasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
           {view === 'gantt' && <GanttView tasks={scopedTasks} members={members} projects={scopedProjects} openTask={(t) => setTaskModal({ task: t })} />}
-          {view === 'raci' && <RaciView tasks={scopedTasks} members={members} perm={perm} projects={scopedProjects} updateRaci={updateRaci} />}
+          {view === 'raci' && <RaciView tasks={scopedTasks} members={members} perm={perm} currentMemberId={connectedAs} projects={scopedProjects} updateRaci={updateRaci} />}
           {view === 'priorisation' && <PrioritisationView tasks={tasks} members={members} openTask={(t) => setTaskModal({ task: t })} />}
           {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} onImport={importMembers} />}
           {view === 'contacts' && <ContactsView contacts={externalContacts} perm={perm} editContact={(c) => setContactModal({ contact: c })} newContact={() => setContactModal({ contact: null })} />}
@@ -2803,7 +2836,7 @@ function ReferentApp({ session, onSignOut }) {
 
       {taskModal && <TaskModal task={taskModal.task} initialProjectId={taskModal.presetProjectId} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} onSave={saveTask} onDelete={deleteTask} onClaim={claimTask} onDuplicate={duplicateTask} onClose={() => setTaskModal(null)} />}
       {memberModal && perm.canManageTeam && <MemberModal member={memberModal.member} onSave={saveMember} onDelete={deleteMember} onClose={() => setMemberModal(null)} />}
-      {projectModal && perm.canCreateProject && <ProjectModal project={projectModal.project} members={members} externalContacts={externalContacts} tasks={tasks} currentMemberId={connectedAs} onSave={saveProject} onDelete={deleteProject} onClose={() => setProjectModal(null)} />}
+      {projectModal && perm.canCreateProject && <ProjectModal project={projectModal.project} members={members} externalContacts={externalContacts} tasks={tasks} currentMemberId={connectedAs} perm={perm} onSave={saveProject} onDelete={deleteProject} onClose={() => setProjectModal(null)} />}
       {apptModal && <AppointmentModal appointment={apptModal.appointment} members={members} externalContacts={externalContacts} readOnly={!perm.canManageAppointments} onSave={saveAppt} onDelete={deleteAppt} onClose={() => setApptModal(null)} />}
       {contactModal && perm.canManageContacts && <ContactModal contact={contactModal.contact} onSave={saveContact} onDelete={deleteContact} onClose={() => setContactModal(null)} />}
       {requestModal && <RequestModal members={members} externalContacts={externalContacts} projects={projects} currentMemberId={connectedAs} onSave={saveRequest} onClose={() => setRequestModal(null)} />}

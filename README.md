@@ -196,10 +196,12 @@ npm run dev
 
 - **Sécurité des données** : la base autorise actuellement toute personne
   *invitée et connectée* à lire/écrire l'ensemble des données (les
-  restrictions Manager/Référent/Autre sont appliquées côté interface, pas
-  encore au niveau de la base). Pour un usage avec des données sensibles,
-  une évolution des règles Postgres (RLS) par rôle est recommandée avant un
-  déploiement à grande échelle.
+  restrictions Administrateur/Utilisateur, ainsi que la règle "seul le
+  responsable, l'approbateur RACI, le responsable du projet ou un
+  administrateur peut modifier une tâche/un projet existant", sont
+  appliquées côté interface, pas encore au niveau de la base). Pour un
+  usage avec des données sensibles, une évolution des règles Postgres (RLS)
+  par rôle est recommandée avant un déploiement à grande échelle.
 - **RGPD / hébergement de données de santé** : ce projet ne stocke pas de
   données patients, seulement des tâches/plannings d'équipe. Si vous deviez
   un jour y faire transiter des données de santé, vérifiez au préalable les

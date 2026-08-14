@@ -166,10 +166,15 @@ function shuffleArray(arr) {
   }
   return a;
 }
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
-const addMonths = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setMonth(d.getMonth() + n); return d.toISOString().slice(0, 10); };
-const addYears = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setFullYear(d.getFullYear() + n); return d.toISOString().slice(0, 10); };
+// toISOString() convertit toujours en UTC : pour un fuseau en avance sur UTC
+// (France), minuit local devient la veille en UTC, décalant la date d'un
+// jour en arrière (ex. le 14 enregistré devenait le 13). On reformate donc
+// à partir des composants locaux de la Date plutôt que de la convertir en UTC.
+const toISODate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const todayISO = () => toISODate(new Date());
+const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return toISODate(d); };
+const addMonths = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setMonth(d.getMonth() + n); return toISODate(d); };
+const addYears = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setFullYear(d.getFullYear() + n); return toISODate(d); };
 
 const daysBetween = (isoDate) => {
   if (!isoDate) return null;

@@ -2754,6 +2754,56 @@ function ReferentApp({ session, onSignOut }) {
     if (exists) notifyProjectChanges(prevProject, projectObj);
     else notifyNewProjectTeam(projectObj);
 
+    // Garder les tâches du projet cohérentes avec l'équipe et le responsable
+    // actuels (utile après une duplication vers un autre service, ou un
+    // simple changement d'équipe) : on retire des tâches les personnes qui
+    // ne sont plus dans l'équipe, et les tâches alignées sur l'ancien
+    // responsable suivent le nouveau.
+    if (exists) {
+      const oldTeam = prevProject.teamIds || [];
+      const newTeam = projectObj.teamIds || [];
+      const teamChanged = oldTeam.length !== newTeam.length || oldTeam.some(id => !newTeam.includes(id));
+      const oldResponsibleIds = prevProject.responsibleIds || [];
+      const newResponsibleId = (projectObj.responsibleIds || [])[0] || '';
+      const responsibleChanged = (oldResponsibleIds[0] || '') !== newResponsibleId;
+      if (teamChanged || responsibleChanged) {
+        const affected = tasks.filter(t => t.projectId === projectObj.id);
+        const updated = [];
+        affected.forEach(t => {
+          let changed = false;
+          const nt = { ...t };
+          if (nt.assignMode === 'individuel' && nt.assigneeId) {
+            if (!newTeam.includes(nt.assigneeId)) {
+              nt.assigneeId = (newResponsibleId && newTeam.includes(newResponsibleId)) ? newResponsibleId : '';
+              changed = true;
+            } else if (oldResponsibleIds.includes(nt.assigneeId) && newResponsibleId && nt.assigneeId !== newResponsibleId) {
+              nt.assigneeId = newResponsibleId;
+              changed = true;
+            }
+          } else if (nt.assignMode === 'pool') {
+            const filteredPool = (nt.pool || []).filter(id => newTeam.includes(id));
+            if (filteredPool.length !== (nt.pool || []).length) { nt.pool = filteredPool; changed = true; }
+          } else if (nt.assignMode === 'equipe') {
+            const raci = { ...(nt.raci || {}) };
+            let raciChanged = false;
+            Object.keys(raci).forEach(id => { if (!newTeam.includes(id)) { delete raci[id]; raciChanged = true; } });
+            const currentR = Object.entries(raci).find(([, r]) => r === 'R')?.[0] || '';
+            if (newResponsibleId && newTeam.includes(newResponsibleId) && currentR !== newResponsibleId && (!currentR || oldResponsibleIds.includes(currentR))) {
+              Object.keys(raci).forEach(id => { if (raci[id] === 'R') delete raci[id]; });
+              raci[newResponsibleId] = 'R';
+              raciChanged = true;
+            }
+            if (raciChanged) { nt.raci = raci; changed = true; }
+          }
+          if (changed) updated.push(nt);
+        });
+        if (updated.length) {
+          setTasks(prev => prev.map(x => updated.find(u => u.id === x.id) || x));
+          warnIfFailed(await upsertRows('tasks', updated), 'La mise à jour des tâches du projet');
+        }
+      }
+    }
+
     // Répétition au niveau projet : à la clôture, on recrée un nouveau
     // projet pour le cycle suivant (dates décalées), avec une copie de
     // chacune de ses tâches (dates décalées pareil, responsable qui tourne

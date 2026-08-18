@@ -695,11 +695,18 @@ function ConfirmButton({ onConfirm, label = 'Supprimer', confirmLabel, icon: Ico
 }
 
 function TaskModal({ task, initialProjectId, members, projects, perm, currentMemberId, onSave, onDelete, onClaim, onDuplicate, onClose }) {
-  const [form, setForm] = useState(task || {
-    title: '', description: '', projectId: initialProjectId || projects[0]?.id || '',
-    assignMode: 'individuel', assigneeId: '', pool: [], raci: {},
-    priority: 'normale', importance: 'moyenne', scope: 'courte', status: 'a_faire', startDate: '', deadline: '', time: '',
-    repeatUnit: 'aucune', repeatEvery: 1, avoidDays: [],
+  // À la création, si le projet a déjà un responsable, la nouvelle tâche lui
+  // est assignée par défaut (individuel comme équipe/RACI) — reste modifiable.
+  const [form, setForm] = useState(() => {
+    if (task) return task;
+    const projectId = initialProjectId || projects[0]?.id || '';
+    const responsibleId = projects.find(p => p.id === projectId)?.responsibleIds?.[0] || '';
+    return {
+      title: '', description: '', projectId,
+      assignMode: 'individuel', assigneeId: responsibleId, pool: [], raci: responsibleId ? { [responsibleId]: 'R' } : {},
+      priority: 'normale', importance: 'moyenne', scope: 'courte', status: 'a_faire', startDate: '', deadline: '', time: '',
+      repeatUnit: 'aucune', repeatEvery: 1, avoidDays: [],
+    };
   });
 
   const isOpenPoolTask = task && form.assignMode === 'pool' && task.pool && task.pool.length > 0 && !task.assigneeId;
@@ -721,14 +728,22 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
       if (newProject?.endDate && date > newProject.endDate) return newProject.endDate;
       return date;
     };
-    setForm(f => ({
-      ...f, projectId: newProjectId,
-      assigneeId: stillValid(f.assigneeId) ? f.assigneeId : '',
-      pool: f.pool.filter(stillValid),
-      raci: Object.fromEntries(Object.entries(f.raci).filter(([id]) => stillValid(id))),
-      startDate: clamp(f.startDate),
-      deadline: clamp(f.deadline),
-    }));
+    setForm(f => {
+      const nextAssigneeId = stillValid(f.assigneeId) ? f.assigneeId : '';
+      const nextRaci = Object.fromEntries(Object.entries(f.raci).filter(([id]) => stillValid(id)));
+      // Pour une tâche en cours de création (pas encore de responsable/RACI
+      // choisi), on applique par défaut le responsable du nouveau projet.
+      const responsibleId = !task ? (newProject?.responsibleIds?.[0] || '') : '';
+      const applyDefault = !task && !nextAssigneeId && Object.keys(nextRaci).length === 0 && responsibleId;
+      return {
+        ...f, projectId: newProjectId,
+        assigneeId: applyDefault ? responsibleId : nextAssigneeId,
+        pool: f.pool.filter(stillValid),
+        raci: applyDefault ? { [responsibleId]: 'R' } : nextRaci,
+        startDate: clamp(f.startDate),
+        deadline: clamp(f.deadline),
+      };
+    });
   };
 
   // Une personne "toujours approbatrice" démarre au rôle "A" plutôt que "I"

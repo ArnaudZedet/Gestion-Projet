@@ -6,7 +6,7 @@ import {
   Search, Loader2, Inbox, GanttChartSquare, Grid3x3, MapPin, Lock, Target, Repeat,
   ClipboardList, Send, XCircle, Building2, Mail, Check,
   Flag, PlayCircle, ShieldAlert, GraduationCap, Milestone as MilestoneIcon, Megaphone, ClipboardCheck,
-  ChevronLeft, ChevronRight, FolderPlus, List as ListIcon, Download, Copy, Upload, MessageSquare
+  ChevronLeft, ChevronRight, FolderPlus, List as ListIcon, Download, Copy, Upload, MessageSquare, Network
 } from 'lucide-react';
 
 /* ---------------------------------------------------------------------- */
@@ -58,7 +58,7 @@ const isUrgent = (t) => t.priority === 'urgente' || t.priority === 'haute';
 const isImportant = (t) => t.importance === 'critique' || t.importance === 'elevee';
 
 const PROJECT_COLORS = ['#2563EB', '#0D9488', '#B54708', '#7C3AED', '#B42318', '#0369A1', '#4D7C0F'];
-const FUNCTIONS = ['Manipulateur', 'Secrétaire', 'Aide manipulateur', 'Médecin', 'Manager'];
+const FUNCTIONS = ['Manipulateur', 'Secrétaire', 'Aide manipulateur', 'Médecin', 'Échographiste', 'Manager'];
 const SERVICES = ['Radio', 'Scanner', 'IRM'];
 // Service d'un projet (distinct des services d'un collaborateur, qui peut en
 // avoir plusieurs) — un projet a un seul service parmi ceux-ci, "Autre" inclus.
@@ -323,6 +323,16 @@ const ROW_MAPPERS = {
     table: 'external_contacts',
     toRow: (c) => ({ id: c.id, name: c.name, organization: c.organization || null, role: c.role || null, email: c.email || null }),
     fromRow: (r) => ({ id: r.id, name: r.name, organization: r.organization || '', role: r.role || '', email: r.email || '' }),
+  },
+  orgNodes: {
+    table: 'org_nodes',
+    toRow: (n) => ({ id: n.id, parent_id: n.parentId || null, label: n.label, sort_order: n.sortOrder || 0 }),
+    fromRow: (r) => ({ id: r.id, parentId: r.parent_id || '', label: r.label, sortOrder: r.sort_order || 0 }),
+  },
+  orgAssignments: {
+    table: 'org_assignments',
+    toRow: (a) => ({ id: a.id, node_id: a.nodeId, person_type: a.personType, person_id: a.personId, role_label: a.roleLabel || null, sort_order: a.sortOrder || 0 }),
+    fromRow: (r) => ({ id: r.id, nodeId: r.node_id, personType: r.person_type, personId: r.person_id, roleLabel: r.role_label || '', sortOrder: r.sort_order || 0 }),
   },
   taskRequests: {
     table: 'task_requests',
@@ -2368,6 +2378,159 @@ function PrioritisationView({ tasks, members, openTask }) {
 }
 
 /* ---------------------------------------------------------------------- */
+/*  Organigramme                                                          */
+/* ---------------------------------------------------------------------- */
+
+// Étiquette de rôle sous une personne (ex. "Référente qualité") : stockée
+// sur l'affectation à la boîte (org_assignments), jamais sur la fiche
+// collaborateur ou le contact externe — la modifier ici ne les touche pas.
+function OrgPersonChip({ assignment, person, canEdit, nodes, onUpdate, onRemove }) {
+  const [editing, setEditing] = useState(false);
+  const [role, setRole] = useState(assignment.roleLabel || '');
+  if (!person) return null;
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 group">
+      <div className="flex items-center justify-between gap-1.5">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Avatar name={person.name} size={16} />
+          <span className="text-xs text-slate-700 truncate">{person.name}</span>
+        </div>
+        {canEdit && (
+          <div className="hidden group-hover:flex items-center gap-1 shrink-0">
+            <button onClick={() => setEditing(v => !v)} className="text-slate-400 hover:text-slate-600"><Pencil size={11} /></button>
+            <button onClick={() => onRemove(assignment.id)} className="text-slate-400 hover:text-red-600"><X size={11} /></button>
+          </div>
+        )}
+      </div>
+      {(assignment.roleLabel || editing) && !editing && (
+        <div className="text-[10px] text-blue-600 mt-0.5">{assignment.roleLabel}</div>
+      )}
+      {editing && (
+        <div className="flex items-center gap-1 mt-1">
+          <input autoFocus value={role} onChange={e => setRole(e.target.value)} placeholder="Rôle (ex. Référente qualité)"
+            className="text-[11px] border border-slate-200 rounded px-1.5 py-0.5 flex-1 min-w-0 focus:outline-none" />
+          <select value={assignment.nodeId} onChange={e => onUpdate(assignment.id, { nodeId: e.target.value })} className="text-[10px] border border-slate-200 rounded px-1 py-0.5 max-w-[70px]" title="Déplacer vers…">
+            {nodes.map(n => <option key={n.id} value={n.id}>{n.label}</option>)}
+          </select>
+          <button onClick={() => { onUpdate(assignment.id, { roleLabel: role }); setEditing(false); }} className="text-blue-600"><Check size={13} /></button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OrgAddPersonForm({ members, externalContacts, onAdd, onCancel }) {
+  const [type, setType] = useState('member');
+  const [personId, setPersonId] = useState('');
+  const options = type === 'member' ? members : externalContacts;
+  return (
+    <div className="flex items-center gap-1 mt-1.5">
+      <select value={type} onChange={e => { setType(e.target.value); setPersonId(''); }} className="text-[11px] border border-slate-200 rounded px-1 py-1">
+        <option value="member">Équipe</option>
+        <option value="external">Externe</option>
+      </select>
+      <select value={personId} onChange={e => setPersonId(e.target.value)} className="text-[11px] border border-slate-200 rounded px-1 py-1 flex-1 min-w-0">
+        <option value="">— choisir —</option>
+        {options.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+      <button disabled={!personId} onClick={() => { onAdd(type, personId); setPersonId(''); }} className="text-blue-600 disabled:opacity-30"><Check size={14} /></button>
+      <button onClick={onCancel} className="text-slate-400"><X size={14} /></button>
+    </div>
+  );
+}
+
+function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, canEdit, onAddNode, onRenameNode, onDeleteNode, onAddPerson, onUpdateAssignment, onRemoveAssignment }) {
+  const [renaming, setRenaming] = useState(false);
+  const [label, setLabel] = useState(node.label);
+  const [addingPerson, setAddingPerson] = useState(false);
+  const [addingChild, setAddingChild] = useState(false);
+  const [childLabel, setChildLabel] = useState('');
+  const children = allNodes.filter(n => n.parentId === node.id).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  const people = assignments.filter(a => a.nodeId === node.id);
+  const personOf = (a) => a.personType === 'member' ? members.find(m => m.id === a.personId) : externalContacts.find(c => c.id === a.personId);
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/50 min-w-[190px]">
+        <div className="flex items-center justify-between gap-1.5 mb-2">
+          {renaming ? (
+            <div className="flex items-center gap-1 flex-1">
+              <input autoFocus value={label} onChange={e => setLabel(e.target.value)} className="text-xs border border-slate-200 rounded px-1.5 py-0.5 flex-1 min-w-0 focus:outline-none" />
+              <button onClick={() => { onRenameNode(node.id, label); setRenaming(false); }} className="text-blue-600"><Check size={13} /></button>
+            </div>
+          ) : (
+            <span className="text-sm font-medium text-slate-700">{node.label}</span>
+          )}
+          {canEdit && !renaming && (
+            <div className="flex items-center gap-1 shrink-0">
+              <button onClick={() => setRenaming(true)} className="text-slate-400 hover:text-slate-600"><Pencil size={12} /></button>
+              <ConfirmButton onConfirm={() => onDeleteNode(node.id)} icon={Trash2} confirmLabel={children.length || people.length ? 'Supprimera aussi son contenu.' : 'Supprimer cette boîte ?'} label="" />
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col gap-1.5">
+          {people.map(a => (
+            <OrgPersonChip key={a.id} assignment={a} person={personOf(a)} canEdit={canEdit} nodes={allNodes} onUpdate={onUpdateAssignment} onRemove={onRemoveAssignment} />
+          ))}
+          {people.length === 0 && <span className="text-[11px] text-slate-400">Personne ici</span>}
+        </div>
+        {canEdit && (
+          addingPerson ? (
+            <OrgAddPersonForm members={members} externalContacts={externalContacts}
+              onAdd={(type, id) => { onAddPerson(node.id, type, id); setAddingPerson(false); }}
+              onCancel={() => setAddingPerson(false)} />
+          ) : (
+            <button onClick={() => setAddingPerson(true)} className="text-[11px] text-blue-600 hover:underline mt-1.5">+ Ajouter</button>
+          )
+        )}
+      </div>
+      {canEdit && (
+        addingChild ? (
+          <div className="flex items-center gap-1 mt-1.5">
+            <input autoFocus value={childLabel} onChange={e => setChildLabel(e.target.value)} placeholder="Nom de la boîte" className="text-xs border border-slate-200 rounded px-1.5 py-1 focus:outline-none" />
+            <button disabled={!childLabel.trim()} onClick={() => { onAddNode(node.id, childLabel.trim()); setChildLabel(''); setAddingChild(false); }} className="text-blue-600 disabled:opacity-30"><Check size={14} /></button>
+            <button onClick={() => setAddingChild(false)} className="text-slate-400"><X size={14} /></button>
+          </div>
+        ) : (
+          <button onClick={() => setAddingChild(true)} className="text-[11px] text-slate-400 hover:text-slate-600 mt-1.5">+ Sous-boîte</button>
+        )
+      )}
+      {children.length > 0 && (
+        <>
+          <div className="w-px h-5 bg-slate-200" />
+          <div className="flex items-start gap-6">
+            {children.map(child => (
+              <div key={child.id} className="flex flex-col items-center">
+                <div className="w-px h-5 bg-slate-200" />
+                <OrgNodeBox node={child} allNodes={allNodes} assignments={assignments} members={members} externalContacts={externalContacts} canEdit={canEdit}
+                  onAddNode={onAddNode} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} onAddPerson={onAddPerson} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function OrgChartView({ nodes, assignments, members, externalContacts, perm, onAddNode, onRenameNode, onDeleteNode, onAddPerson, onUpdateAssignment, onRemoveAssignment }) {
+  const roots = nodes.filter(n => !n.parentId).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  if (roots.length === 0) {
+    return <EmptyState icon={Network} title="Organigramme vide" subtitle="Il sera généré automatiquement à la prochaine connexion d'un administrateur." />;
+  }
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 p-6 overflow-x-auto">
+      <div className="flex flex-col items-center min-w-fit mx-auto w-fit">
+        {roots.map(root => (
+          <OrgNodeBox key={root.id} node={root} allNodes={nodes} assignments={assignments} members={members} externalContacts={externalContacts} canEdit={perm.isManager}
+            onAddNode={onAddNode} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} onAddPerson={onAddPerson} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
 /*  Commentaires & suggestions                                            */
 /* ---------------------------------------------------------------------- */
 
@@ -2423,6 +2586,7 @@ function navFor(perm) {
     nav.push({ id: 'team', label: 'Équipe', Icon: Users, accent: '#F472B6' });
     nav.push({ id: 'contacts', label: 'Contacts externes', Icon: Building2, accent: '#C084FC' });
   }
+  nav.push({ id: 'orgchart', label: 'Organigramme', Icon: Network, accent: '#F59E0B' });
   nav.push({ id: 'feedback', label: 'Commentaires & suggestions', Icon: MessageSquare, accent: '#14B8A6' });
   return nav;
 }
@@ -2441,6 +2605,8 @@ function ReferentApp({ session, onSignOut }) {
   const [appointments, setAppointments] = useState([]);
   const [externalContacts, setExternalContacts] = useState([]);
   const [taskRequests, setTaskRequests] = useState([]);
+  const [orgNodes, setOrgNodes] = useState([]);
+  const [orgAssignments, setOrgAssignments] = useState([]);
   const [view, setView] = useState('tasks');
   const [connectedAs, setConnectedAs] = useState('');
   const [taskModal, setTaskModal] = useState(null);
@@ -2470,8 +2636,24 @@ function ReferentApp({ session, onSignOut }) {
       const data = await loadAll();
       if (Object.values(data).some(r => r.error)) { setLoadError(true); setLoading(false); return; }
       const m = data.members.items, p = data.projects.items, t = data.tasks.items, a = data.appointments.items, ec = data.externalContacts.items, tr = data.taskRequests.items;
+      let on = data.orgNodes.items, oa = data.orgAssignments.items;
       setMembers(m); setProjects(p); setTasks(t); setAppointments(a); setExternalContacts(ec); setTaskRequests(tr);
       const matched = m.find(x => (x.email || '').toLowerCase() === myEmail);
+      // Squelette par défaut de l'organigramme, créé une seule fois par un
+      // administrateur si la table est encore vide.
+      if (on.length === 0 && matched?.accessLevel === 'manager') {
+        const siege = uid(), operationnel = uid(), cabinet = uid();
+        on = [
+          { id: siege, parentId: '', label: 'Siège SIMAGO', sortOrder: 0 },
+          { id: operationnel, parentId: siege, label: 'Opérationnel', sortOrder: 0 },
+          { id: cabinet, parentId: operationnel, label: 'Cabinet', sortOrder: 0 },
+          { id: uid(), parentId: cabinet, label: 'IRM', sortOrder: 0 },
+          { id: uid(), parentId: cabinet, label: 'Scanner', sortOrder: 1 },
+          { id: uid(), parentId: cabinet, label: 'Radio / Sénologie', sortOrder: 2 },
+        ];
+        insertRows('orgNodes', on);
+      }
+      setOrgNodes(on); setOrgAssignments(oa);
       if (matched) {
         setConnectedAs(matched.id);
         setView(matched.accessLevel === 'manager' ? 'dashboard' : 'tasks');
@@ -2540,6 +2722,44 @@ function ReferentApp({ session, onSignOut }) {
       });
       return res.ok;
     } catch { return false; }
+  };
+
+  // Organigramme : boîtes hiérarchiques (org_nodes) + personnes placées
+  // dedans (org_assignments), séparées des fiches collaborateurs — modifier
+  // le rôle affiché ici ne touche jamais à la fonction/fiche de la personne.
+  const orgDescendantIds = (nodeId) => {
+    const direct = orgNodes.filter(n => n.parentId === nodeId).map(n => n.id);
+    return direct.concat(...direct.map(orgDescendantIds));
+  };
+  const addOrgNode = async (parentId, label) => {
+    const node = { id: uid(), parentId, label, sortOrder: orgNodes.filter(n => n.parentId === parentId).length };
+    setOrgNodes(prev => [...prev, node]);
+    warnIfFailed(await upsertRow('orgNodes', node), "La boîte de l'organigramme");
+  };
+  const renameOrgNode = async (nodeId, label) => {
+    const updated = { ...orgNodes.find(n => n.id === nodeId), label };
+    setOrgNodes(prev => prev.map(n => n.id === nodeId ? updated : n));
+    warnIfFailed(await upsertRow('orgNodes', updated), "Le nom de la boîte");
+  };
+  const deleteOrgNode = async (nodeId) => {
+    const ids = new Set([nodeId, ...orgDescendantIds(nodeId)]);
+    setOrgNodes(prev => prev.filter(n => !ids.has(n.id)));
+    setOrgAssignments(prev => prev.filter(a => !ids.has(a.nodeId)));
+    warnIfFailed(await deleteRow('orgNodes', nodeId), 'La suppression de la boîte');
+  };
+  const addOrgPerson = async (nodeId, personType, personId) => {
+    const assignment = { id: uid(), nodeId, personType, personId, roleLabel: '', sortOrder: orgAssignments.filter(a => a.nodeId === nodeId).length };
+    setOrgAssignments(prev => [...prev, assignment]);
+    warnIfFailed(await upsertRow('orgAssignments', assignment), "L'ajout dans l'organigramme");
+  };
+  const updateOrgAssignment = async (assignmentId, patch) => {
+    const updated = { ...orgAssignments.find(a => a.id === assignmentId), ...patch };
+    setOrgAssignments(prev => prev.map(a => a.id === assignmentId ? updated : a));
+    warnIfFailed(await upsertRow('orgAssignments', updated), "La mise à jour de l'organigramme");
+  };
+  const removeOrgAssignment = async (assignmentId) => {
+    setOrgAssignments(prev => prev.filter(a => a.id !== assignmentId));
+    warnIfFailed(await deleteRow('orgAssignments', assignmentId), "Le retrait de l'organigramme");
   };
 
   const notifyNewProjectTeam = (project) => {
@@ -3077,6 +3297,8 @@ function ReferentApp({ session, onSignOut }) {
           {view === 'priorisation' && <PrioritisationView tasks={tasks} members={members} openTask={(t) => setTaskModal({ task: t })} />}
           {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} onImport={importMembers} />}
           {view === 'contacts' && <ContactsView contacts={externalContacts} perm={perm} editContact={(c) => setContactModal({ contact: c })} newContact={() => setContactModal({ contact: null })} />}
+          {view === 'orgchart' && <OrgChartView nodes={orgNodes} assignments={orgAssignments} members={members} externalContacts={externalContacts} perm={perm}
+            onAddNode={addOrgNode} onRenameNode={renameOrgNode} onDeleteNode={deleteOrgNode} onAddPerson={addOrgPerson} onUpdateAssignment={updateOrgAssignment} onRemoveAssignment={removeOrgAssignment} />}
           {view === 'feedback' && <FeedbackView currentMember={currentMember} onSend={sendFeedback} />}
         </div>
       </div>

@@ -108,6 +108,28 @@ create table if not exists task_requests (
   updated_at timestamptz not null default now()
 );
 
+-- Organigramme : des boîtes hiérarchiques (org_nodes) et les personnes qui y
+-- sont placées (org_assignments), chacune avec un rôle affiché propre à
+-- cette place — ne touche jamais la fiche collaborateur ni le contact
+-- externe (members / external_contacts).
+create table if not exists org_nodes (
+  id text primary key,
+  parent_id text references org_nodes(id) on delete cascade,
+  label text not null,
+  sort_order int not null default 0,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists org_assignments (
+  id text primary key,
+  node_id text not null references org_nodes(id) on delete cascade,
+  person_type text not null,
+  person_id text not null,
+  role_label text,
+  sort_order int not null default 0,
+  updated_at timestamptz not null default now()
+);
+
 -- File d'attente des notifications par email : chaque notification (affectation
 -- à un projet, tâche assignée, rotation de responsable...) est déposée ici au
 -- lieu d'être envoyée immédiatement, puis regroupée en un seul email par
@@ -127,7 +149,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['members','projects','tasks','appointments','external_contacts','task_requests','notification_queue']
+  foreach t in array array['members','projects','tasks','appointments','external_contacts','task_requests','notification_queue','org_nodes','org_assignments']
   loop
     execute format('alter table %I enable row level security;', t);
     execute format('drop policy if exists "authenticated all" on %I;', t);

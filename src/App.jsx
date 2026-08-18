@@ -1689,6 +1689,7 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
   const [filterProject, setFilterProject] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterTeam, setFilterTeam] = useState('all');
+  const [filterService, setFilterService] = useState('all');
   const [query, setQuery] = useState('');
   const selectCls = "border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 bg-white focus:outline-none";
 
@@ -1705,6 +1706,7 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
     return true;
   };
   const projectMatchesTeam = (p) => matchesTeamRoles(rolesOf(p?.teamIds));
+  const projectMatchesService = (p) => filterService === 'all' || p?.service === filterService;
   const matchesTeam = (t) => {
     if (filterTeam === 'all') return true;
     const ids = [t.assigneeId, ...(t.pool || []), ...Object.keys(t.raci || {})].filter(Boolean);
@@ -1724,7 +1726,7 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
     t.title.toLowerCase().includes(query.toLowerCase())
   );
 
-  const visibleProjects = projects.filter(projectMatchesTeam);
+  const visibleProjects = projects.filter(p => projectMatchesTeam(p) && projectMatchesService(p));
   const byDeadline = (a, b) => {
     if (!a.deadline && !b.deadline) return 0;
     if (!a.deadline) return 1;
@@ -1736,7 +1738,7 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
   const projectGroups = grouped
     ? visibleProjects.map(p => ({ project: p, items: filtered.filter(t => t.projectId === p.id).sort(byDeadline) })).filter(g => g.items.length > 0)
     : [{ project: projects.find(p => p.id === filterProject), items: [...filtered].sort(byDeadline) }];
-  const noProject = filtered.filter(t => !projects.some(p => p.id === t.projectId) && matchesTeam(t)).sort(byDeadline);
+  const noProject = filtered.filter(t => !projects.some(p => p.id === t.projectId) && matchesTeam(t) && filterService === 'all').sort(byDeadline);
   const noProjectGroup = grouped && noProject.length ? { project: { id: '_none', name: 'Sans projet', color: '#94A3B8' }, items: noProject } : null;
 
   // Regroupement par service (couleur dominante), puis par ordre chronologique
@@ -1854,6 +1856,9 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
         </select>
         <select className={selectCls} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
           <option value="all">Tous les statuts</option>{STATUSES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+        </select>
+        <select className={selectCls} value={filterService} onChange={e => setFilterService(e.target.value)}>
+          <option value="all">Tous les services</option>{PROJECT_SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
         <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
           {[{ id: 'all', label: 'Toute l\'équipe' }, { id: 'manip', label: 'Manipulateurs' }, { id: 'secretaire', label: 'Secrétaires' }].map(o => (

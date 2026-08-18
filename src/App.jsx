@@ -2562,14 +2562,20 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
   const children = allNodes.filter(n => n.parentId === node.id).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   const manualPeople = assignments.filter(a => a.nodeId === node.id);
   // Boîte de service (IRM/Scanner/Radio) : les collaborateurs affectés à ce
-  // service dans leur fiche y apparaissent automatiquement, sans avoir à les
-  // ajouter à la main — seuls les contacts externes s'ajoutent manuellement.
+  // service dans leur fiche y apparaissent automatiquement (hors fonction
+  // "Manager", qui va dans la boîte Manager) — seuls les contacts externes
+  // s'ajoutent manuellement. La boîte "Manager" fait pareil avec la fonction.
   const matchedService = orgNodeMatchedService(node.label);
+  const isManagerBox = node.label === 'Manager';
   const manualMemberIds = new Set(manualPeople.filter(a => a.personType === 'member').map(a => a.personId));
-  const autoPeople = matchedService
-    ? members.filter(m => (m.services || []).includes(matchedService) && !manualMemberIds.has(m.id))
-        .map(m => ({ id: null, nodeId: node.id, personType: 'member', personId: m.id, roleLabel: '' }))
-    : [];
+  let autoPeople = [];
+  if (matchedService) {
+    autoPeople = members.filter(m => (m.services || []).includes(matchedService) && m.role !== 'Manager' && !manualMemberIds.has(m.id))
+      .map(m => ({ id: null, nodeId: node.id, personType: 'member', personId: m.id, roleLabel: '' }));
+  } else if (isManagerBox) {
+    autoPeople = members.filter(m => m.role === 'Manager' && !manualMemberIds.has(m.id))
+      .map(m => ({ id: null, nodeId: node.id, personType: 'member', personId: m.id, roleLabel: '' }));
+  }
   const people = [...manualPeople, ...autoPeople];
   const personOf = (a) => a.personType === 'member' ? members.find(m => m.id === a.personId) : externalContacts.find(c => c.id === a.personId);
   // Plusieurs enfants (ex. Cabinet → IRM/Scanner/Radio) : ils sont dessinés
@@ -2583,14 +2589,15 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
   // dedans portent la couleur (voir OrgPeopleList tint).
   const bodyBg = matchedService ? '#fff' : (color ? `${color}33` : '#F8FAFC');
 
+  const onlyExternal = !!matchedService || isManagerBox;
   const addPersonBlock = canEdit && (
     addingPerson ? (
-      <OrgAddPersonForm members={members} externalContacts={externalContacts} onlyExternal={!!matchedService}
+      <OrgAddPersonForm members={members} externalContacts={externalContacts} onlyExternal={onlyExternal}
         onAdd={(type, id) => { onAddPerson(node.id, type, id); setAddingPerson(false); }}
         onCancel={() => setAddingPerson(false)} />
     ) : (
       <button onClick={() => setAddingPerson(true)} className="text-[11px] text-blue-600 hover:underline mt-1.5">
-        + Ajouter{matchedService ? ' un externe' : ''}
+        + Ajouter{onlyExternal ? ' un externe' : ''}
       </button>
     )
   );
@@ -2620,24 +2627,30 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
   );
 
   if (fanOut) {
+    // Les enfants qui sont des boîtes de service (IRM/Scanner/Radio) restent
+    // côte à côte ; les autres (Manager, ou des entreprises ajoutées à côté
+    // de Cabinet) s'empilent chacun sur toute la largeur, au-dessus.
+    const sideBySide = children.filter(c => orgNodeMatchedService(c.label));
+    const stacked = children.filter(c => !orgNodeMatchedService(c.label));
+    const childProps = { allNodes, assignments, members, externalContacts, canEdit, onAddNode, onRenameNode, onDeleteNode, onAddPerson, onUpdateAssignment, onRemoveAssignment };
     return (
       <div className="rounded-xl overflow-hidden" style={{ border: `2px solid ${barColor}` }}>
         <OrgNodeHeaderActions node={node} canEdit={canEdit} renaming={renaming} setRenaming={setRenaming} label={label} setLabel={setLabel}
           hasContent={children.length > 0 || people.length > 0} barColor={barColor} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
-        <div className="p-3" style={{ background: `${barColor}26` }}>
+        <div className="p-3 flex flex-col gap-3" style={{ background: `${barColor}26` }}>
           {(people.length > 0 || canEdit) && (
-            <div className="pb-3 mb-3 border-b border-black/10">
+            <div className="pb-3 border-b border-black/10">
               <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} onAddPerson={onAddPerson} grouped={false} />
               {addPersonBlock}
             </div>
           )}
-          <div className="flex items-start gap-4">
-            {children.map(child => (
-              <OrgNodeBox key={child.id} node={child} allNodes={allNodes} assignments={assignments} members={members} externalContacts={externalContacts} canEdit={canEdit}
-                onAddNode={onAddNode} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} onAddPerson={onAddPerson} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} />
-            ))}
-          </div>
-          <div className="flex items-center gap-3 mt-2">{addChildBlock}{addSiblingBlock}</div>
+          {stacked.map(child => <OrgNodeBox key={child.id} node={child} {...childProps} />)}
+          {sideBySide.length > 0 && (
+            <div className="flex items-start gap-4">
+              {sideBySide.map(child => <OrgNodeBox key={child.id} node={child} {...childProps} />)}
+            </div>
+          )}
+          <div className="flex items-center gap-3">{addChildBlock}{addSiblingBlock}</div>
         </div>
       </div>
     );
@@ -2800,27 +2813,32 @@ function ReferentApp({ session, onSignOut }) {
           { id: siege, parentId: '', label: 'Siège SIMAGO', sortOrder: 0 },
           { id: operationnel, parentId: siege, label: 'Opérationnel', sortOrder: 0 },
           { id: cabinet, parentId: operationnel, label: 'Cabinet', sortOrder: 0 },
-          { id: uid(), parentId: cabinet, label: 'Encadrement', sortOrder: 0 },
+          { id: uid(), parentId: cabinet, label: 'Manager', sortOrder: 0 },
           { id: uid(), parentId: cabinet, label: 'IRM', sortOrder: 1 },
           { id: uid(), parentId: cabinet, label: 'Scanner', sortOrder: 2 },
           { id: uid(), parentId: cabinet, label: 'Radio / Sénologie', sortOrder: 3 },
         ];
         insertRows('orgNodes', on);
       } else if (matched?.accessLevel === 'manager') {
-        // Migration : sur un organigramme déjà créé, "Encadrement" existait
-        // comme simple bandeau des personnes posées directement sur Cabinet,
-        // au lieu d'une vraie boîte au même niveau qu'IRM/Scanner/Radio — on
-        // la crée une fois et on y déplace ces personnes.
+        // Migration : sur un organigramme déjà créé, la boîte des managers
+        // n'existait pas encore, ou existait sous l'ancien nom "Encadrement"
+        // — on la crée/renomme une fois, et on y déplace les personnes
+        // posées directement sur Cabinet (ancien comportement).
         const cabinetNode = on.find(n => n.label === 'Cabinet');
-        const hasEncadrement = cabinetNode && on.some(n => n.parentId === cabinetNode.id && n.label === 'Encadrement');
-        if (cabinetNode && !hasEncadrement) {
-          const encadrementId = uid();
-          const encadrementNode = { id: encadrementId, parentId: cabinetNode.id, label: 'Encadrement', sortOrder: -1 };
-          on = [...on, encadrementNode];
-          insertRows('orgNodes', [encadrementNode]);
+        const managerNode = cabinetNode && on.find(n => n.parentId === cabinetNode.id && n.label === 'Manager');
+        const encadrementNode = cabinetNode && on.find(n => n.parentId === cabinetNode.id && n.label === 'Encadrement');
+        if (cabinetNode && !managerNode && encadrementNode) {
+          const renamed = { ...encadrementNode, label: 'Manager' };
+          on = on.map(n => n.id === encadrementNode.id ? renamed : n);
+          upsertRows('orgNodes', [renamed]);
+        } else if (cabinetNode && !managerNode) {
+          const managerId = uid();
+          const newManagerNode = { id: managerId, parentId: cabinetNode.id, label: 'Manager', sortOrder: -1 };
+          on = [...on, newManagerNode];
+          insertRows('orgNodes', [newManagerNode]);
           const directOnCabinet = oa.filter(a => a.nodeId === cabinetNode.id);
           if (directOnCabinet.length) {
-            const moved = directOnCabinet.map(a => ({ ...a, nodeId: encadrementId }));
+            const moved = directOnCabinet.map(a => ({ ...a, nodeId: managerId }));
             oa = oa.map(a => moved.find(mv => mv.id === a.id) || a);
             upsertRows('orgAssignments', moved);
           }

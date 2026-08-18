@@ -2480,11 +2480,11 @@ function orgPersonBucket(role) {
   if (role === 'Manipulateur' || role === 'Aide manipulateur') return 'Manipulateurs';
   return 'Autres';
 }
-function OrgPeopleList({ list, personOf, canEdit, allNodes, onUpdateAssignment, onRemoveAssignment, onAddPerson, grouped, tint }) {
+function OrgPeopleList({ list, personOf, canEdit, allNodes, onUpdateAssignment, onRemoveAssignment, onAddPerson, grouped, tint, horizontal }) {
   if (list.length === 0) return <span className="text-[11px] text-slate-400">Personne ici</span>;
   if (!grouped) {
     return (
-      <div className="flex flex-col gap-1.5">
+      <div className={horizontal ? 'flex flex-wrap gap-1.5' : 'flex flex-col gap-1.5'}>
         {list.map(a => (
           <OrgPersonChip key={a.id || `auto-${a.personId}`} assignment={a} person={personOf(a)} canEdit={canEdit} nodes={allNodes} showFunction tint={tint}
             onUpdate={onUpdateAssignment} onRemove={onRemoveAssignment} onMaterialize={onAddPerson} />
@@ -2628,23 +2628,31 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
 
   if (fanOut) {
     // Les enfants qui sont des boîtes de service (IRM/Scanner/Radio) restent
-    // côte à côte ; les autres (Manager, ou des entreprises ajoutées à côté
-    // de Cabinet) s'empilent chacun sur toute la largeur, au-dessus.
+    // côte à côte. Les boîtes "composées" (qui ont elles-mêmes plusieurs
+    // enfants, ex. Cabinet) gardent leur propre ligne. Les boîtes simples
+    // restantes (ex. des entreprises ajoutées à côté de Cabinet) s'empilent
+    // entre elles, en colonne, à côté des boîtes composées plutôt que
+    // dessous — pour que tout tienne sur la même page.
     const sideBySide = children.filter(c => orgNodeMatchedService(c.label));
-    const stacked = children.filter(c => !orgNodeMatchedService(c.label));
+    const rest = children.filter(c => !orgNodeMatchedService(c.label));
+    const compound = rest.filter(c => allNodes.some(n => n.parentId === c.id));
+    const simple = rest.filter(c => !allNodes.some(n => n.parentId === c.id));
     const childProps = { allNodes, assignments, members, externalContacts, canEdit, onAddNode, onRenameNode, onDeleteNode, onAddPerson, onUpdateAssignment, onRemoveAssignment };
     return (
       <div className="rounded-xl overflow-hidden" style={{ border: `2px solid ${barColor}` }}>
         <OrgNodeHeaderActions node={node} canEdit={canEdit} renaming={renaming} setRenaming={setRenaming} label={label} setLabel={setLabel}
-          hasContent={children.length > 0 || people.length > 0} barColor={barColor} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
+          hasContent={children.length > 0} barColor={barColor} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
         <div className="p-3 flex flex-col gap-3" style={{ background: `${barColor}26` }}>
-          {(people.length > 0 || canEdit) && (
-            <div className="pb-3 border-b border-black/10">
-              <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} onAddPerson={onAddPerson} grouped={false} />
-              {addPersonBlock}
+          {(compound.length > 0 || simple.length > 0) && (
+            <div className="flex items-start gap-4">
+              {compound.map(child => <OrgNodeBox key={child.id} node={child} {...childProps} />)}
+              {simple.length > 0 && (
+                <div className="flex flex-col gap-3">
+                  {simple.map(child => <OrgNodeBox key={child.id} node={child} {...childProps} />)}
+                </div>
+              )}
             </div>
           )}
-          {stacked.map(child => <OrgNodeBox key={child.id} node={child} {...childProps} />)}
           {sideBySide.length > 0 && (
             <div className="flex items-start gap-4">
               {sideBySide.map(child => <OrgNodeBox key={child.id} node={child} {...childProps} />)}
@@ -2658,12 +2666,12 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
 
   return (
     <div className="flex flex-col items-center">
-      <div className={`rounded-xl overflow-hidden ${matchedService ? 'min-w-[320px]' : 'min-w-[190px]'}`} style={{ border: `2px solid ${barColor}` }}>
+      <div className={`rounded-xl overflow-hidden ${matchedService ? 'min-w-[220px]' : 'min-w-[190px]'}`} style={{ border: `2px solid ${barColor}` }}>
         <OrgNodeHeaderActions node={node} canEdit={canEdit} renaming={renaming} setRenaming={setRenaming} label={label} setLabel={setLabel}
           hasContent={children.length > 0 || people.length > 0} barColor={barColor} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
         <div className="p-3" style={{ background: bodyBg }}>
           <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} onAddPerson={onAddPerson}
-            grouped={children.length === 0} tint={matchedService ? color : null} />
+            grouped={children.length === 0} tint={matchedService ? color : null} horizontal={isManagerBox} />
           {addPersonBlock}
         </div>
       </div>
@@ -2825,23 +2833,28 @@ function ReferentApp({ session, onSignOut }) {
         // — on la crée/renomme une fois, et on y déplace les personnes
         // posées directement sur Cabinet (ancien comportement).
         const cabinetNode = on.find(n => n.label === 'Cabinet');
-        const managerNode = cabinetNode && on.find(n => n.parentId === cabinetNode.id && n.label === 'Manager');
+        let managerNode = cabinetNode && on.find(n => n.parentId === cabinetNode.id && n.label === 'Manager');
         const encadrementNode = cabinetNode && on.find(n => n.parentId === cabinetNode.id && n.label === 'Encadrement');
         if (cabinetNode && !managerNode && encadrementNode) {
           const renamed = { ...encadrementNode, label: 'Manager' };
           on = on.map(n => n.id === encadrementNode.id ? renamed : n);
           upsertRows('orgNodes', [renamed]);
+          managerNode = renamed;
         } else if (cabinetNode && !managerNode) {
           const managerId = uid();
           const newManagerNode = { id: managerId, parentId: cabinetNode.id, label: 'Manager', sortOrder: -1 };
           on = [...on, newManagerNode];
           insertRows('orgNodes', [newManagerNode]);
-          const directOnCabinet = oa.filter(a => a.nodeId === cabinetNode.id);
-          if (directOnCabinet.length) {
-            const moved = directOnCabinet.map(a => ({ ...a, nodeId: managerId }));
-            oa = oa.map(a => moved.find(mv => mv.id === a.id) || a);
-            upsertRows('orgAssignments', moved);
-          }
+          managerNode = newManagerNode;
+        }
+        // Nettoyage : des personnes posées directement sur Cabinet (boîte qui
+        // n'affiche plus ses propres personnes depuis qu'elle englobe des
+        // enfants) sont déplacées dans Manager, où qu'elles doivent être vues.
+        const directOnCabinet = cabinetNode ? oa.filter(a => a.nodeId === cabinetNode.id) : [];
+        if (managerNode && directOnCabinet.length) {
+          const moved = directOnCabinet.map(a => ({ ...a, nodeId: managerNode.id }));
+          oa = oa.map(a => moved.find(mv => mv.id === a.id) || a);
+          upsertRows('orgAssignments', moved);
         }
       }
       setOrgNodes(on); setOrgAssignments(oa);

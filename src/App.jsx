@@ -2990,9 +2990,9 @@ function ReferentApp({ session, onSignOut }) {
         </div>
       </div>
 
-      {taskModal && <TaskModal task={taskModal.task} initialProjectId={taskModal.presetProjectId} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} onSave={saveTask} onDelete={deleteTask} onClaim={claimTask} onDuplicate={duplicateTask} onClose={() => setTaskModal(null)} />}
+      {taskModal && <TaskModal key={taskModal.task?.id || 'new'} task={taskModal.task} initialProjectId={taskModal.presetProjectId} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} onSave={saveTask} onDelete={deleteTask} onClaim={claimTask} onDuplicate={duplicateTask} onClose={() => setTaskModal(null)} />}
       {memberModal && perm.canManageTeam && <MemberModal member={memberModal.member} onSave={saveMember} onDelete={deleteMember} onClose={() => setMemberModal(null)} />}
-      {projectModal && perm.canCreateProject && <ProjectModal project={projectModal.project} members={members} externalContacts={externalContacts} tasks={tasks} currentMemberId={connectedAs} perm={perm} onSave={saveProject} onDelete={deleteProject} onClose={() => setProjectModal(null)} />}
+      {projectModal && perm.canCreateProject && <ProjectModal key={projectModal.project?.id || 'new'} project={projectModal.project} members={members} externalContacts={externalContacts} tasks={tasks} currentMemberId={connectedAs} perm={perm} onSave={saveProject} onDelete={deleteProject} onClose={() => setProjectModal(null)} />}
       {apptModal && <AppointmentModal appointment={apptModal.appointment} members={members} externalContacts={externalContacts} readOnly={!perm.canManageAppointments} onSave={saveAppt} onDelete={deleteAppt} onClose={() => setApptModal(null)} />}
       {contactModal && perm.canManageContacts && <ContactModal contact={contactModal.contact} onSave={saveContact} onDelete={deleteContact} onClose={() => setContactModal(null)} />}
       {requestModal && <RequestModal members={members} externalContacts={externalContacts} projects={projects} currentMemberId={connectedAs} onSave={saveRequest} onClose={() => setRequestModal(null)} />}

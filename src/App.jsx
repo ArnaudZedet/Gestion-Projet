@@ -1074,7 +1074,7 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 /*  Fiche projet — création avec équipe + conduite de projet automatique  */
 /* ---------------------------------------------------------------------- */
 
-function ProjectModal({ project, members, externalContacts, tasks, currentMemberId, perm, onSave, onDelete, onClose }) {
+function ProjectModal({ project, members, externalContacts, tasks, currentMemberId, perm, onSave, onDelete, onDuplicate, onClose }) {
   const isNew = !project;
   const locked = !canEditProject(project, currentMemberId, perm.isManager);
   const [form, setForm] = useState(project || { name: '', description: '', service: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', repeatUnit: 'aucune', repeatEvery: 1, responsibleIds: [], rotateResponsible: false, responsibleRotationPool: [] });
@@ -1259,15 +1259,25 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
         </div>
       )}
       <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
-        {project && !locked ? (
-          <ConfirmButton
-            onConfirm={() => onDelete(project.id)}
-            confirmLabel={(() => {
-              const count = (tasks || []).filter(t => t.projectId === project.id).length;
-              return count > 0 ? `Supprimera aussi ${count} tâche${count !== 1 ? 's' : ''} associée${count !== 1 ? 's' : ''}.` : 'Supprimer ce projet ?';
-            })()}
-          />
-        ) : <span />}
+        <div className="flex items-center gap-2">
+          {project && !locked && (
+            <ConfirmButton
+              onConfirm={() => onDelete(project.id)}
+              confirmLabel={(() => {
+                const count = (tasks || []).filter(t => t.projectId === project.id).length;
+                return count > 0 ? `Supprimera aussi ${count} tâche${count !== 1 ? 's' : ''} associée${count !== 1 ? 's' : ''}.` : 'Supprimer ce projet ?';
+              })()}
+            />
+          )}
+          {project && !locked && onDuplicate && (
+            <button onClick={() => onDuplicate(project)} className="text-slate-500 hover:bg-slate-50 text-sm font-medium px-3 py-2 rounded-lg flex items-center gap-1.5">
+              <Copy size={14} /> Dupliquer{(() => {
+                const count = (tasks || []).filter(t => t.projectId === project.id).length;
+                return count > 0 ? ` (+${count} tâche${count !== 1 ? 's' : ''})` : '';
+              })()}
+            </button>
+          )}
+        </div>
         {!locked && (
           <button disabled={!form.name.trim() || !form.startDate || !form.endDate} onClick={handleSubmit} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
             {project ? 'Enregistrer' : 'Créer le projet'}
@@ -2813,6 +2823,19 @@ function ReferentApp({ session, onSignOut }) {
     }
     setProjectModal(null);
   };
+  const duplicateProject = async (original) => {
+    const id = uid();
+    const clone = { ...original, id, name: `${original.name} (copie)`, status: 'en_cours', pendingApproval: false, createdBy: connectedAs, lateNotifiedAt: null };
+    setProjects(prev => [...prev, clone]);
+    warnIfFailed(await upsertRow('projects', clone), 'La copie du projet');
+    const oldTasks = tasks.filter(t => t.projectId === original.id);
+    const clonedTasks = oldTasks.map(t => ({ ...t, id: uid(), projectId: id, status: 'a_faire', createdAt: todayISO() }));
+    if (clonedTasks.length) {
+      setTasks(prev => [...prev, ...clonedTasks]);
+      warnIfFailed(await insertRows('tasks', clonedTasks), 'Les tâches du projet dupliqué');
+    }
+    setProjectModal({ project: clone });
+  };
 
   const saveAppt = (a) => {
     const exists = appointments.some(x => x.id === a.id);
@@ -2992,7 +3015,7 @@ function ReferentApp({ session, onSignOut }) {
 
       {taskModal && <TaskModal key={taskModal.task?.id || 'new'} task={taskModal.task} initialProjectId={taskModal.presetProjectId} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} onSave={saveTask} onDelete={deleteTask} onClaim={claimTask} onDuplicate={duplicateTask} onClose={() => setTaskModal(null)} />}
       {memberModal && perm.canManageTeam && <MemberModal member={memberModal.member} onSave={saveMember} onDelete={deleteMember} onClose={() => setMemberModal(null)} />}
-      {projectModal && perm.canCreateProject && <ProjectModal key={projectModal.project?.id || 'new'} project={projectModal.project} members={members} externalContacts={externalContacts} tasks={tasks} currentMemberId={connectedAs} perm={perm} onSave={saveProject} onDelete={deleteProject} onClose={() => setProjectModal(null)} />}
+      {projectModal && perm.canCreateProject && <ProjectModal key={projectModal.project?.id || 'new'} project={projectModal.project} members={members} externalContacts={externalContacts} tasks={tasks} currentMemberId={connectedAs} perm={perm} onSave={saveProject} onDelete={deleteProject} onDuplicate={duplicateProject} onClose={() => setProjectModal(null)} />}
       {apptModal && <AppointmentModal appointment={apptModal.appointment} members={members} externalContacts={externalContacts} readOnly={!perm.canManageAppointments} onSave={saveAppt} onDelete={deleteAppt} onClose={() => setApptModal(null)} />}
       {contactModal && perm.canManageContacts && <ContactModal contact={contactModal.contact} onSave={saveContact} onDelete={deleteContact} onClose={() => setContactModal(null)} />}
       {requestModal && <RequestModal members={members} externalContacts={externalContacts} projects={projects} currentMemberId={connectedAs} onSave={saveRequest} onClose={() => setRequestModal(null)} />}

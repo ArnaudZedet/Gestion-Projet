@@ -2484,7 +2484,7 @@ function OrgPeopleList({ list, personOf, canEdit, allNodes, onUpdateAssignment, 
   if (list.length === 0) return <span className="text-[11px] text-slate-400">Personne ici</span>;
   if (!grouped) {
     return (
-      <div className="grid grid-cols-3 gap-1.5">
+      <div className="flex flex-col gap-1.5">
         {list.map(a => (
           <OrgPersonChip key={a.id || `auto-${a.personId}`} assignment={a} person={personOf(a)} canEdit={canEdit} nodes={allNodes} showFunction tint={tint}
             onUpdate={onUpdateAssignment} onRemove={onRemoveAssignment} onMaterialize={onAddPerson} />
@@ -2499,7 +2499,7 @@ function OrgPeopleList({ list, personOf, canEdit, allNodes, onUpdateAssignment, 
       {Object.entries(buckets).filter(([, l]) => l.length > 0).map(([label, l]) => (
         <div key={label}>
           <div className="text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">{label}</div>
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="flex flex-col gap-1.5">
             {l.map(a => (
               <OrgPersonChip key={a.id || `auto-${a.personId}`} assignment={a} person={personOf(a)} canEdit={canEdit} nodes={allNodes} tint={tint}
                 onUpdate={onUpdateAssignment} onRemove={onRemoveAssignment} onMaterialize={onAddPerson} />

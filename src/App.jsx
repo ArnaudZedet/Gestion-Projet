@@ -58,7 +58,7 @@ const isUrgent = (t) => t.priority === 'urgente' || t.priority === 'haute';
 const isImportant = (t) => t.importance === 'critique' || t.importance === 'elevee';
 
 const PROJECT_COLORS = ['#2563EB', '#0D9488', '#B54708', '#7C3AED', '#B42318', '#0369A1', '#4D7C0F'];
-const FUNCTIONS = ['Manipulateur', 'Secrétaire', 'Aide manipulateur', 'Médecin'];
+const FUNCTIONS = ['Manipulateur', 'Secrétaire', 'Aide manipulateur', 'Médecin', 'Manager'];
 const SERVICES = ['Radio', 'Scanner', 'IRM'];
 // Service d'un projet (distinct des services d'un collaborateur, qui peut en
 // avoir plusieurs) — un projet a un seul service parmi ceux-ci, "Autre" inclus.
@@ -715,7 +715,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
   const locked = task && !canEditTask(task, currentMemberId, currentProject, perm.isManager);
 
   const projectTeamIds = currentProject?.teamIds || [];
-  const availableMembers = projectTeamIds.length > 0 ? members.filter(m => projectTeamIds.includes(m.id)) : members;
+  const availableMembers = projectTeamIds.length > 0 ? members.filter(m => projectTeamIds.includes(m.id)) : members.filter(m => m.role !== 'Manager');
   const projectHasOwnRepeat = !!(currentProject?.repeatUnit && currentProject.repeatUnit !== 'aucune');
 
   const handleProjectChange = (newProjectId) => {
@@ -1046,12 +1046,9 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
         </Field>
       </div>
       <Field label="Email (compte de connexion)"><input type="email" className={inputCls} value={form.email || ''} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="prenom.nom@cabinet.fr" /></Field>
-      <Field label="Rôle sur les projets/tâches">
-        <label className="flex items-center gap-2 text-xs text-slate-600">
-          <input type="checkbox" checked={!!form.alwaysApprover} onChange={e => setForm({ ...form, alwaysApprover: e.target.checked })} />
-          Toujours approbateur, jamais responsable (y compris en cas de tirage aléatoire)
-        </label>
-      </Field>
+      {roleChoice === 'Manager' && (
+        <div className="text-xs text-slate-400 -mt-2.5 mb-3.5">La fonction "Manager" exclut automatiquement cette personne des équipes de projet et du tirage au sort des responsables.</div>
+      )}
       <Field label="Rôle applicatif (droits d'accès)">
         <select className={inputCls} value={form.accessLevel} onChange={e => setForm({ ...form, accessLevel: e.target.value })}>
           {ACCESS_LEVELS.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
@@ -1167,7 +1164,7 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
           <PoolButtonRow label="Pôles" groups={comboPoolGroups} isSelected={id => form.teamIds.includes(id)} onToggle={togglePool} disabled={locked} />
         </div>
         <div className="flex flex-wrap gap-1.5">
-          {members.map(m => {
+          {members.filter(m => m.role !== 'Manager').map(m => {
             const active = form.teamIds.includes(m.id);
             return (
               <button key={m.id} type="button" disabled={locked} onClick={() => toggleTeam(m.id)}
@@ -2602,9 +2599,13 @@ function ReferentApp({ session, onSignOut }) {
   // cycle en cours ; vide → on démarre un nouveau cycle (nouveau tirage).
   const nextRotatedAssignee = (t, teamOverride) => {
     const rawTeam = teamOverride || projects.find(p => p.id === t.projectId)?.teamIds || [];
-    // Certaines personnes (toujours approbatrices) ne doivent jamais être
-    // tirées au sort comme responsable, même en rotation aléatoire.
-    const team = rawTeam.filter(id => !members.find(m => m.id === id)?.alwaysApprover);
+    // Certaines personnes (toujours approbatrices, ou fonction "Manager") ne
+    // doivent jamais être tirées au sort comme responsable, même en
+    // rotation aléatoire.
+    const team = rawTeam.filter(id => {
+      const m = members.find(x => x.id === id);
+      return !(m?.alwaysApprover || m?.role === 'Manager');
+    });
     if (team.length === 0) return { assigneeId: t.assigneeId, rotationPool: [] };
     let pool = (t.rotationPool || []).filter(id => team.includes(id));
     if (pool.length === 0) {

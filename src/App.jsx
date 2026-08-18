@@ -1104,14 +1104,22 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
       if (!perm.isManager && (!projectObj.responsibleIds || projectObj.responsibleIds.length === 0)) projectObj.responsibleIds = [currentMemberId];
     }
     // Rotation cochée mais personne choisi : tirage aléatoire immédiat dans
-    // l'équipe, plutôt que d'attendre le premier renouvellement pour avoir
-    // un responsable.
+    // l'équipe (hors personnes exclues du roulement), plutôt que d'attendre
+    // le premier renouvellement pour avoir un responsable.
     if (projectObj.rotateResponsible && (!projectObj.responsibleIds || projectObj.responsibleIds.length === 0) && (projectObj.teamIds || []).length > 0) {
-      const pool = shuffleArray(projectObj.teamIds);
+      const eligible = projectObj.teamIds.filter(mid => {
+        const mm = members.find(x => x.id === mid);
+        return !(mm?.alwaysApprover || mm?.role === 'Manager');
+      });
+      const pool = shuffleArray(eligible.length > 0 ? eligible : projectObj.teamIds);
       projectObj.responsibleIds = [pool[0]];
       projectObj.responsibleRotationPool = pool.slice(1);
     }
-    const governanceTasks = (isNew && genGovernance && form.startDate && form.endDate) ? buildGovernanceTasks(form.startDate, form.endDate, id, currentMemberId) : [];
+    // Les étapes générées automatiquement suivent le responsable du projet
+    // (choisi manuellement ou tiré au sort ci-dessus), pas forcément la
+    // personne qui crée le projet.
+    const governanceAssignee = (projectObj.responsibleIds && projectObj.responsibleIds[0]) || currentMemberId;
+    const governanceTasks = (isNew && genGovernance && form.startDate && form.endDate) ? buildGovernanceTasks(form.startDate, form.endDate, id, governanceAssignee) : [];
     onSave(projectObj, governanceTasks);
   };
   const validateProject = () => {

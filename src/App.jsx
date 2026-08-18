@@ -2626,13 +2626,14 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
     )
   );
 
-  if (fanOut) {
-    // Les enfants qui sont des boîtes de service (IRM/Scanner/Radio) restent
-    // côte à côte. Les boîtes "composées" (qui ont elles-mêmes plusieurs
-    // enfants, ex. Cabinet) gardent leur propre ligne. Les boîtes simples
-    // restantes (ex. des entreprises ajoutées à côté de Cabinet) s'empilent
-    // entre elles, en colonne, à côté des boîtes composées plutôt que
-    // dessous — pour que tout tienne sur la même page.
+  // Seul Cabinet englobe vraiment ses enfants dans une grande boîte
+  // colorée (IRM/Scanner/Radio à l'intérieur). Toute autre boîte à
+  // plusieurs enfants (Opérationnel avec Cabinet + des sociétés tierces,
+  // par ex.) reste compacte comme Siège, avec juste une ligne vers ses
+  // enfants rangés en dessous.
+  const encloseChildren = fanOut && node.label === 'Cabinet';
+
+  if (encloseChildren) {
     const sideBySide = children.filter(c => orgNodeMatchedService(c.label));
     const rest = children.filter(c => !orgNodeMatchedService(c.label));
     const compound = rest.filter(c => allNodes.some(n => n.parentId === c.id));
@@ -2664,6 +2665,15 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
     );
   }
 
+  // Boîte compacte (Siège, Opérationnel, Manager, IRM/Scanner/Radio,
+  // sociétés tierces...) : ses propres personnes (si c'est une boîte
+  // "feuille"), puis une ligne vers ses enfants rangés en dessous — les
+  // boîtes qui ont elles-mêmes des enfants (ex. Cabinet) sur leur propre
+  // ligne, les boîtes simples (ex. plusieurs sociétés) empilées entre
+  // elles à côté, pour limiter la hauteur totale.
+  const compoundChildren = children.filter(c => allNodes.some(n => n.parentId === c.id));
+  const simpleChildren = children.filter(c => !allNodes.some(n => n.parentId === c.id));
+  const childProps = { allNodes, assignments, members, externalContacts, canEdit, onAddNode, onRenameNode, onDeleteNode, onAddPerson, onUpdateAssignment, onRemoveAssignment };
   return (
     <div className="flex flex-col items-center">
       <div className={`rounded-xl overflow-hidden ${matchedService ? 'min-w-[220px]' : 'min-w-[190px]'}`} style={{ border: `2px solid ${barColor}` }}>
@@ -2671,16 +2681,22 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
           hasContent={children.length > 0 || people.length > 0} barColor={barColor} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
         <div className="p-3" style={{ background: bodyBg }}>
           <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} onAddPerson={onAddPerson}
-            grouped={children.length === 0} tint={matchedService ? color : null} horizontal={isManagerBox} />
+            grouped={children.length === 0 && !isManagerBox} tint={matchedService ? color : null} horizontal={isManagerBox} />
           {addPersonBlock}
         </div>
       </div>
       <div className="flex items-center gap-3">{addChildBlock}{addSiblingBlock}</div>
-      {children.length === 1 && (
+      {children.length > 0 && (
         <>
           <div className="w-px h-5 bg-slate-200" />
-          <OrgNodeBox node={children[0]} allNodes={allNodes} assignments={assignments} members={members} externalContacts={externalContacts} canEdit={canEdit}
-            onAddNode={onAddNode} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} onAddPerson={onAddPerson} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} />
+          <div className="flex items-start gap-4">
+            {compoundChildren.map(child => <OrgNodeBox key={child.id} node={child} {...childProps} />)}
+            {simpleChildren.length > 0 && (
+              <div className="flex flex-col gap-3">
+                {simpleChildren.map(child => <OrgNodeBox key={child.id} node={child} {...childProps} />)}
+              </div>
+            )}
+          </div>
         </>
       )}
     </div>

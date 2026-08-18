@@ -2514,7 +2514,7 @@ function OrgPeopleList({ list, personOf, canEdit, allNodes, onUpdateAssignment, 
 // Boîtes IRM/Scanner/Radio... : mêmes couleurs de service que le reste de
 // l'app (Radio/Scanner/IRM/Autre), reconnues par le nom de la boîte. Siège
 // et Cabinet ont leur propre couleur dédiée (pas des services).
-const ORG_NODE_COLORS = { 'Siège SIMAGO': '#0D9488', 'Cabinet': '#BE185D' };
+const ORG_NODE_COLORS = { 'Siège SIMAGO': '#0D9488', 'Cabinet': '#94A3B8', 'Manager': '#22C55E' };
 function orgNodeMatchedService(label) {
   return PROJECT_SERVICES.find(s => s !== 'Autre' && label.toLowerCase().includes(s.toLowerCase())) || null;
 }

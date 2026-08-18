@@ -2490,30 +2490,39 @@ function OrgPeopleList({ list, personOf, canEdit, allNodes, onUpdateAssignment, 
 }
 
 // Boîtes IRM/Scanner/Radio... : mêmes couleurs de service que le reste de
-// l'app (Radio/Scanner/IRM/Autre), reconnues par le nom de la boîte.
+// l'app (Radio/Scanner/IRM/Autre), reconnues par le nom de la boîte. Siège
+// et Cabinet ont leur propre couleur dédiée (pas des services).
+const ORG_NODE_COLORS = { 'Siège SIMAGO': '#0D9488', 'Cabinet': '#BE185D' };
 function orgNodeServiceColor(label) {
+  if (ORG_NODE_COLORS[label]) return ORG_NODE_COLORS[label];
   const found = PROJECT_SERVICES.find(s => s !== 'Autre' && label.toLowerCase().includes(s.toLowerCase()));
   return found ? SERVICE_COLORS[found] : null;
 }
 
-function OrgNodeHeaderActions({ node, canEdit, renaming, setRenaming, label, setLabel, hasContent, accentColor, onRenameNode, onDeleteNode }) {
+// Bandeau plein de couleur en haut de chaque boîte (façon fiche annuaire),
+// couleur du service si le nom correspond, sinon gris foncé neutre pour les
+// boîtes structurelles (Siège, Opérationnel, Cabinet).
+function OrgNodeHeaderActions({ node, canEdit, renaming, setRenaming, label, setLabel, hasContent, barColor, onRenameNode, onDeleteNode }) {
   return (
-    <div className="flex items-center justify-between gap-1.5 mb-2">
-      {renaming ? (
-        <div className="flex items-center gap-1 flex-1">
-          <input autoFocus value={label} onChange={e => setLabel(e.target.value)} className="text-xs border border-slate-200 rounded px-1.5 py-0.5 flex-1 min-w-0 focus:outline-none" />
-          <button onClick={() => { onRenameNode(node.id, label); setRenaming(false); }} className="text-blue-600"><Check size={13} /></button>
-        </div>
-      ) : (
-        <span className="text-sm font-medium" style={{ color: accentColor || '#334155' }}>{node.label}</span>
-      )}
-      {canEdit && !renaming && (
-        <div className="flex items-center gap-1 shrink-0">
-          <button onClick={() => setRenaming(true)} className="text-slate-400 hover:text-slate-600"><Pencil size={12} /></button>
+    <>
+      <div className="px-3 py-2" style={{ background: barColor }}>
+        {renaming ? (
+          <input autoFocus value={label} onChange={e => setLabel(e.target.value)} className="text-xs bg-white/90 rounded px-1.5 py-1 w-full focus:outline-none" />
+        ) : (
+          <span className="text-sm font-semibold text-white">{node.label}</span>
+        )}
+      </div>
+      {canEdit && (
+        <div className="flex items-center justify-end gap-2 px-3 pt-2 -mb-1">
+          {renaming ? (
+            <button onClick={() => { onRenameNode(node.id, label); setRenaming(false); }} className="text-blue-600 text-[11px] font-medium">Valider</button>
+          ) : (
+            <button onClick={() => setRenaming(true)} className="text-slate-400 hover:text-slate-600"><Pencil size={12} /></button>
+          )}
           <ConfirmButton onConfirm={() => onDeleteNode(node.id)} icon={Trash2} confirmLabel={hasContent ? 'Supprimera aussi son contenu.' : 'Supprimer cette boîte ?'} label="" />
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -2533,6 +2542,8 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
   // reliés par un trait en dessous.
   const fanOut = children.length > 1;
   const color = orgNodeServiceColor(node.label);
+  const barColor = color || '#1E293B';
+  const bodyBg = color ? `${color}33` : '#F8FAFC';
 
   const addPersonBlock = canEdit && (
     addingPerson ? (
@@ -2570,32 +2581,36 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
 
   if (fanOut) {
     return (
-      <div className="border border-slate-900 rounded-xl p-3 bg-white">
+      <div className="rounded-xl overflow-hidden" style={{ border: `2px solid ${barColor}` }}>
         <OrgNodeHeaderActions node={node} canEdit={canEdit} renaming={renaming} setRenaming={setRenaming} label={label} setLabel={setLabel}
-          hasContent={children.length > 0 || people.length > 0} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
-        <div className={people.length > 0 || canEdit ? 'pb-3 mb-3 border-b border-slate-200' : ''}>
-          <div className="text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">Encadrement</div>
-          <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} grouped={false} />
-          {addPersonBlock}
+          hasContent={children.length > 0 || people.length > 0} barColor={barColor} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
+        <div className="p-3" style={{ background: `${barColor}26` }}>
+          <div className={people.length > 0 || canEdit ? 'pb-3 mb-3 border-b border-black/10' : ''}>
+            <div className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: barColor }}>Encadrement</div>
+            <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} grouped={false} />
+            {addPersonBlock}
+          </div>
+          <div className="flex items-start gap-4">
+            {children.map(child => (
+              <OrgNodeBox key={child.id} node={child} allNodes={allNodes} assignments={assignments} members={members} externalContacts={externalContacts} canEdit={canEdit}
+                onAddNode={onAddNode} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} onAddPerson={onAddPerson} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} />
+            ))}
+          </div>
+          <div className="flex items-center gap-3 mt-2">{addChildBlock}{addSiblingBlock}</div>
         </div>
-        <div className="flex items-start gap-4">
-          {children.map(child => (
-            <OrgNodeBox key={child.id} node={child} allNodes={allNodes} assignments={assignments} members={members} externalContacts={externalContacts} canEdit={canEdit}
-              onAddNode={onAddNode} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} onAddPerson={onAddPerson} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} />
-          ))}
-        </div>
-        <div className="flex items-center gap-3">{addChildBlock}{addSiblingBlock}</div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col items-center">
-      <div className="border border-slate-900 rounded-xl p-3 min-w-[190px]" style={{ background: color ? `${color}14` : '#fff' }}>
+      <div className="rounded-xl overflow-hidden min-w-[190px]" style={{ border: `2px solid ${barColor}` }}>
         <OrgNodeHeaderActions node={node} canEdit={canEdit} renaming={renaming} setRenaming={setRenaming} label={label} setLabel={setLabel}
-          hasContent={children.length > 0 || people.length > 0} accentColor={color} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
-        <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} grouped={children.length === 0} />
-        {addPersonBlock}
+          hasContent={children.length > 0 || people.length > 0} barColor={barColor} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
+        <div className="p-3" style={{ background: bodyBg }}>
+          <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} grouped={children.length === 0} />
+          {addPersonBlock}
+        </div>
       </div>
       <div className="flex items-center gap-3">{addChildBlock}{addSiblingBlock}</div>
       {children.length === 1 && (

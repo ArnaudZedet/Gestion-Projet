@@ -1077,11 +1077,20 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
   const [form, setForm] = useState(project || { name: '', description: '', service: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', repeatUnit: 'aucune', repeatEvery: 1, responsibleIds: [], rotateResponsible: false, responsibleRotationPool: [] });
   const toggleResponsible = (id) => setForm(f => ({ ...f, responsibleIds: (f.responsibleIds || []).includes(id) ? f.responsibleIds.filter(x => x !== id) : [...(f.responsibleIds || []), id] }));
   const [genGovernance, setGenGovernance] = useState(false);
-  const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
+  // Retirer quelqu'un de l'équipe le retire aussi du poste de responsable
+  // du projet — sinon il y reste "fantôme" (invisible dans le sélecteur,
+  // mais toujours enregistré comme responsable).
+  const dropFromResponsibles = (f, removedIds) => (f.responsibleIds || []).some(id => removedIds.includes(id))
+    ? (f.responsibleIds || []).filter(id => !removedIds.includes(id)) : f.responsibleIds;
+  const toggleTeam = (id) => setForm(f => {
+    const teamIds = f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id];
+    return { ...f, teamIds, responsibleIds: dropFromResponsibles(f, [id]) };
+  });
   const comboPoolGroups = combinedPoolGroups(members);
   const togglePool = (ids) => setForm(f => {
     const allIn = ids.every(id => f.teamIds.includes(id));
-    return { ...f, teamIds: allIn ? f.teamIds.filter(id => !ids.includes(id)) : Array.from(new Set([...f.teamIds, ...ids])) };
+    const teamIds = allIn ? f.teamIds.filter(id => !ids.includes(id)) : Array.from(new Set([...f.teamIds, ...ids]));
+    return { ...f, teamIds, responsibleIds: allIn ? dropFromResponsibles(f, ids) : f.responsibleIds };
   });
   const toggleExternal = (id) => setForm(f => ({ ...f, externalIds: (f.externalIds || []).includes(id) ? f.externalIds.filter(x => x !== id) : [...(f.externalIds || []), id] }));
 

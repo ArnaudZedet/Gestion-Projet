@@ -2393,12 +2393,15 @@ function OrgPersonChip({ assignment, person, canEdit, nodes, showFunction, onUpd
   const [editing, setEditing] = useState(false);
   const [role, setRole] = useState(assignment.roleLabel || '');
   if (!person) return null;
+  // Personnes externes (siège, prestataires...) : mêmes couleurs violettes
+  // que "Contacts externes" ailleurs dans l'app, pour les repérer d'un coup d'œil.
+  const external = assignment.personType === 'external';
   return (
-    <div className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 group">
+    <div className={`border rounded-lg px-2 py-1.5 group ${external ? 'bg-purple-50 border-purple-200' : 'bg-white border-slate-200'}`}>
       <div className="flex items-center justify-between gap-1.5">
         <div className="flex items-center gap-1.5 min-w-0">
           <Avatar name={person.name} size={16} />
-          <span className="text-xs text-slate-700 truncate">{person.name}</span>
+          <span className={`text-xs truncate ${external ? 'text-purple-700' : 'text-slate-700'}`}>{person.name}</span>
         </div>
         {canEdit && (
           <div className="hidden group-hover:flex items-center gap-1 shrink-0">
@@ -2486,7 +2489,14 @@ function OrgPeopleList({ list, personOf, canEdit, allNodes, onUpdateAssignment, 
   );
 }
 
-function OrgNodeHeaderActions({ node, canEdit, renaming, setRenaming, label, setLabel, hasContent, onRenameNode, onDeleteNode }) {
+// Boîtes IRM/Scanner/Radio... : mêmes couleurs de service que le reste de
+// l'app (Radio/Scanner/IRM/Autre), reconnues par le nom de la boîte.
+function orgNodeServiceColor(label) {
+  const found = PROJECT_SERVICES.find(s => s !== 'Autre' && label.toLowerCase().includes(s.toLowerCase()));
+  return found ? SERVICE_COLORS[found] : null;
+}
+
+function OrgNodeHeaderActions({ node, canEdit, renaming, setRenaming, label, setLabel, hasContent, accentColor, onRenameNode, onDeleteNode }) {
   return (
     <div className="flex items-center justify-between gap-1.5 mb-2">
       {renaming ? (
@@ -2495,7 +2505,7 @@ function OrgNodeHeaderActions({ node, canEdit, renaming, setRenaming, label, set
           <button onClick={() => { onRenameNode(node.id, label); setRenaming(false); }} className="text-blue-600"><Check size={13} /></button>
         </div>
       ) : (
-        <span className="text-sm font-medium text-slate-700">{node.label}</span>
+        <span className="text-sm font-medium" style={{ color: accentColor || '#334155' }}>{node.label}</span>
       )}
       {canEdit && !renaming && (
         <div className="flex items-center gap-1 shrink-0">
@@ -2513,6 +2523,8 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
   const [addingPerson, setAddingPerson] = useState(false);
   const [addingChild, setAddingChild] = useState(false);
   const [childLabel, setChildLabel] = useState('');
+  const [addingSibling, setAddingSibling] = useState(false);
+  const [siblingLabel, setSiblingLabel] = useState('');
   const children = allNodes.filter(n => n.parentId === node.id).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   const people = assignments.filter(a => a.nodeId === node.id);
   const personOf = (a) => a.personType === 'member' ? members.find(m => m.id === a.personId) : externalContacts.find(c => c.id === a.personId);
@@ -2520,6 +2532,7 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
   // comme des colonnes à l'intérieur d'une seule grande boîte, plutôt que
   // reliés par un trait en dessous.
   const fanOut = children.length > 1;
+  const color = orgNodeServiceColor(node.label);
 
   const addPersonBlock = canEdit && (
     addingPerson ? (
@@ -2541,13 +2554,27 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
       <button onClick={() => setAddingChild(true)} className="text-[11px] text-slate-400 hover:text-slate-600 mt-1.5">+ Sous-boîte</button>
     )
   );
+  // Boîte latérale : un nouveau frère du même niveau (même parent) que
+  // cette boîte, plutôt qu'un enfant dedans.
+  const addSiblingBlock = canEdit && (
+    addingSibling ? (
+      <div className="flex items-center gap-1 mt-1.5">
+        <input autoFocus value={siblingLabel} onChange={e => setSiblingLabel(e.target.value)} placeholder="Nom de la boîte" className="text-xs border border-slate-200 rounded px-1.5 py-1 focus:outline-none" />
+        <button disabled={!siblingLabel.trim()} onClick={() => { onAddNode(node.parentId || '', siblingLabel.trim()); setSiblingLabel(''); setAddingSibling(false); }} className="text-blue-600 disabled:opacity-30"><Check size={14} /></button>
+        <button onClick={() => setAddingSibling(false)} className="text-slate-400"><X size={14} /></button>
+      </div>
+    ) : (
+      <button onClick={() => setAddingSibling(true)} className="text-[11px] text-slate-400 hover:text-slate-600 mt-1.5">+ Boîte à côté</button>
+    )
+  );
 
   if (fanOut) {
     return (
-      <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/50">
+      <div className="border border-slate-900 rounded-xl p-3 bg-white">
         <OrgNodeHeaderActions node={node} canEdit={canEdit} renaming={renaming} setRenaming={setRenaming} label={label} setLabel={setLabel}
           hasContent={children.length > 0 || people.length > 0} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
         <div className={people.length > 0 || canEdit ? 'pb-3 mb-3 border-b border-slate-200' : ''}>
+          <div className="text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">Encadrement</div>
           <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} grouped={false} />
           {addPersonBlock}
         </div>
@@ -2557,20 +2584,20 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
               onAddNode={onAddNode} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} onAddPerson={onAddPerson} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} />
           ))}
         </div>
-        {addChildBlock}
+        <div className="flex items-center gap-3">{addChildBlock}{addSiblingBlock}</div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col items-center">
-      <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/50 min-w-[190px]">
+      <div className="border border-slate-900 rounded-xl p-3 min-w-[190px]" style={{ background: color ? `${color}14` : '#fff' }}>
         <OrgNodeHeaderActions node={node} canEdit={canEdit} renaming={renaming} setRenaming={setRenaming} label={label} setLabel={setLabel}
-          hasContent={children.length > 0 || people.length > 0} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
+          hasContent={children.length > 0 || people.length > 0} accentColor={color} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
         <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} grouped={children.length === 0} />
         {addPersonBlock}
       </div>
-      {addChildBlock}
+      <div className="flex items-center gap-3">{addChildBlock}{addSiblingBlock}</div>
       {children.length === 1 && (
         <>
           <div className="w-px h-5 bg-slate-200" />

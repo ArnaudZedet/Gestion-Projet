@@ -2384,7 +2384,7 @@ function PrioritisationView({ tasks, members, openTask }) {
 // Étiquette de rôle sous une personne (ex. "Référente qualité") : stockée
 // sur l'affectation à la boîte (org_assignments), jamais sur la fiche
 // collaborateur ou le contact externe — la modifier ici ne les touche pas.
-function OrgPersonChip({ assignment, person, canEdit, nodes, onUpdate, onRemove }) {
+function OrgPersonChip({ assignment, person, canEdit, nodes, showFunction, onUpdate, onRemove }) {
   const [editing, setEditing] = useState(false);
   const [role, setRole] = useState(assignment.roleLabel || '');
   if (!person) return null;
@@ -2402,6 +2402,9 @@ function OrgPersonChip({ assignment, person, canEdit, nodes, onUpdate, onRemove 
           </div>
         )}
       </div>
+      {showFunction && person.role && (
+        <div className="text-[10px] text-slate-400 mt-0.5">{person.role}</div>
+      )}
       {(assignment.roleLabel || editing) && !editing && (
         <div className="text-[10px] text-blue-600 mt-0.5">{assignment.roleLabel}</div>
       )}
@@ -2439,6 +2442,66 @@ function OrgAddPersonForm({ members, externalContacts, onAdd, onCancel }) {
   );
 }
 
+// Regroupe les personnes d'une boîte par fonction (Secrétaires /
+// Manipulateurs / Autres) quand la boîte n'a pas d'enfants — pure mise en
+// forme, ne change rien aux données.
+function orgPersonBucket(role) {
+  if (role === 'Secrétaire') return 'Secrétaires';
+  if (role === 'Manipulateur' || role === 'Aide manipulateur') return 'Manipulateurs';
+  return 'Autres';
+}
+function OrgPeopleList({ list, personOf, canEdit, allNodes, onUpdateAssignment, onRemoveAssignment, grouped }) {
+  if (list.length === 0) return <span className="text-[11px] text-slate-400">Personne ici</span>;
+  if (!grouped) {
+    return (
+      <div className="flex flex-col gap-1.5">
+        {list.map(a => (
+          <OrgPersonChip key={a.id} assignment={a} person={personOf(a)} canEdit={canEdit} nodes={allNodes} showFunction
+            onUpdate={onUpdateAssignment} onRemove={onRemoveAssignment} />
+        ))}
+      </div>
+    );
+  }
+  const buckets = { Secrétaires: [], Manipulateurs: [], Autres: [] };
+  list.forEach(a => { const p = personOf(a); buckets[p ? orgPersonBucket(p.role) : 'Autres'].push(a); });
+  return (
+    <div className="flex flex-col gap-2.5">
+      {Object.entries(buckets).filter(([, l]) => l.length > 0).map(([label, l]) => (
+        <div key={label}>
+          <div className="text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">{label}</div>
+          <div className="flex flex-col gap-1.5">
+            {l.map(a => (
+              <OrgPersonChip key={a.id} assignment={a} person={personOf(a)} canEdit={canEdit} nodes={allNodes}
+                onUpdate={onUpdateAssignment} onRemove={onRemoveAssignment} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OrgNodeHeaderActions({ node, canEdit, renaming, setRenaming, label, setLabel, hasContent, onRenameNode, onDeleteNode }) {
+  return (
+    <div className="flex items-center justify-between gap-1.5 mb-2">
+      {renaming ? (
+        <div className="flex items-center gap-1 flex-1">
+          <input autoFocus value={label} onChange={e => setLabel(e.target.value)} className="text-xs border border-slate-200 rounded px-1.5 py-0.5 flex-1 min-w-0 focus:outline-none" />
+          <button onClick={() => { onRenameNode(node.id, label); setRenaming(false); }} className="text-blue-600"><Check size={13} /></button>
+        </div>
+      ) : (
+        <span className="text-sm font-medium text-slate-700">{node.label}</span>
+      )}
+      {canEdit && !renaming && (
+        <div className="flex items-center gap-1 shrink-0">
+          <button onClick={() => setRenaming(true)} className="text-slate-400 hover:text-slate-600"><Pencil size={12} /></button>
+          <ConfirmButton onConfirm={() => onDeleteNode(node.id)} icon={Trash2} confirmLabel={hasContent ? 'Supprimera aussi son contenu.' : 'Supprimer cette boîte ?'} label="" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, canEdit, onAddNode, onRenameNode, onDeleteNode, onAddPerson, onUpdateAssignment, onRemoveAssignment }) {
   const [renaming, setRenaming] = useState(false);
   const [label, setLabel] = useState(node.label);
@@ -2448,65 +2511,66 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
   const children = allNodes.filter(n => n.parentId === node.id).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   const people = assignments.filter(a => a.nodeId === node.id);
   const personOf = (a) => a.personType === 'member' ? members.find(m => m.id === a.personId) : externalContacts.find(c => c.id === a.personId);
+  // Plusieurs enfants (ex. Cabinet → IRM/Scanner/Radio) : ils sont dessinés
+  // comme des colonnes à l'intérieur d'une seule grande boîte, plutôt que
+  // reliés par un trait en dessous.
+  const fanOut = children.length > 1;
+
+  const addPersonBlock = canEdit && (
+    addingPerson ? (
+      <OrgAddPersonForm members={members} externalContacts={externalContacts}
+        onAdd={(type, id) => { onAddPerson(node.id, type, id); setAddingPerson(false); }}
+        onCancel={() => setAddingPerson(false)} />
+    ) : (
+      <button onClick={() => setAddingPerson(true)} className="text-[11px] text-blue-600 hover:underline mt-1.5">+ Ajouter</button>
+    )
+  );
+  const addChildBlock = canEdit && (
+    addingChild ? (
+      <div className="flex items-center gap-1 mt-1.5">
+        <input autoFocus value={childLabel} onChange={e => setChildLabel(e.target.value)} placeholder="Nom de la boîte" className="text-xs border border-slate-200 rounded px-1.5 py-1 focus:outline-none" />
+        <button disabled={!childLabel.trim()} onClick={() => { onAddNode(node.id, childLabel.trim()); setChildLabel(''); setAddingChild(false); }} className="text-blue-600 disabled:opacity-30"><Check size={14} /></button>
+        <button onClick={() => setAddingChild(false)} className="text-slate-400"><X size={14} /></button>
+      </div>
+    ) : (
+      <button onClick={() => setAddingChild(true)} className="text-[11px] text-slate-400 hover:text-slate-600 mt-1.5">+ Sous-boîte</button>
+    )
+  );
+
+  if (fanOut) {
+    return (
+      <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/50">
+        <OrgNodeHeaderActions node={node} canEdit={canEdit} renaming={renaming} setRenaming={setRenaming} label={label} setLabel={setLabel}
+          hasContent={children.length > 0 || people.length > 0} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
+        <div className={people.length > 0 || canEdit ? 'pb-3 mb-3 border-b border-slate-200' : ''}>
+          <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} grouped={false} />
+          {addPersonBlock}
+        </div>
+        <div className="flex items-start gap-4">
+          {children.map(child => (
+            <OrgNodeBox key={child.id} node={child} allNodes={allNodes} assignments={assignments} members={members} externalContacts={externalContacts} canEdit={canEdit}
+              onAddNode={onAddNode} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} onAddPerson={onAddPerson} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} />
+          ))}
+        </div>
+        {addChildBlock}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col items-center">
       <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/50 min-w-[190px]">
-        <div className="flex items-center justify-between gap-1.5 mb-2">
-          {renaming ? (
-            <div className="flex items-center gap-1 flex-1">
-              <input autoFocus value={label} onChange={e => setLabel(e.target.value)} className="text-xs border border-slate-200 rounded px-1.5 py-0.5 flex-1 min-w-0 focus:outline-none" />
-              <button onClick={() => { onRenameNode(node.id, label); setRenaming(false); }} className="text-blue-600"><Check size={13} /></button>
-            </div>
-          ) : (
-            <span className="text-sm font-medium text-slate-700">{node.label}</span>
-          )}
-          {canEdit && !renaming && (
-            <div className="flex items-center gap-1 shrink-0">
-              <button onClick={() => setRenaming(true)} className="text-slate-400 hover:text-slate-600"><Pencil size={12} /></button>
-              <ConfirmButton onConfirm={() => onDeleteNode(node.id)} icon={Trash2} confirmLabel={children.length || people.length ? 'Supprimera aussi son contenu.' : 'Supprimer cette boîte ?'} label="" />
-            </div>
-          )}
-        </div>
-        <div className="flex flex-col gap-1.5">
-          {people.map(a => (
-            <OrgPersonChip key={a.id} assignment={a} person={personOf(a)} canEdit={canEdit} nodes={allNodes} onUpdate={onUpdateAssignment} onRemove={onRemoveAssignment} />
-          ))}
-          {people.length === 0 && <span className="text-[11px] text-slate-400">Personne ici</span>}
-        </div>
-        {canEdit && (
-          addingPerson ? (
-            <OrgAddPersonForm members={members} externalContacts={externalContacts}
-              onAdd={(type, id) => { onAddPerson(node.id, type, id); setAddingPerson(false); }}
-              onCancel={() => setAddingPerson(false)} />
-          ) : (
-            <button onClick={() => setAddingPerson(true)} className="text-[11px] text-blue-600 hover:underline mt-1.5">+ Ajouter</button>
-          )
-        )}
+        <OrgNodeHeaderActions node={node} canEdit={canEdit} renaming={renaming} setRenaming={setRenaming} label={label} setLabel={setLabel}
+          hasContent={children.length > 0 || people.length > 0} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
+        <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} grouped={children.length === 0} />
+        {addPersonBlock}
       </div>
-      {canEdit && (
-        addingChild ? (
-          <div className="flex items-center gap-1 mt-1.5">
-            <input autoFocus value={childLabel} onChange={e => setChildLabel(e.target.value)} placeholder="Nom de la boîte" className="text-xs border border-slate-200 rounded px-1.5 py-1 focus:outline-none" />
-            <button disabled={!childLabel.trim()} onClick={() => { onAddNode(node.id, childLabel.trim()); setChildLabel(''); setAddingChild(false); }} className="text-blue-600 disabled:opacity-30"><Check size={14} /></button>
-            <button onClick={() => setAddingChild(false)} className="text-slate-400"><X size={14} /></button>
-          </div>
-        ) : (
-          <button onClick={() => setAddingChild(true)} className="text-[11px] text-slate-400 hover:text-slate-600 mt-1.5">+ Sous-boîte</button>
-        )
-      )}
-      {children.length > 0 && (
+      {addChildBlock}
+      {children.length === 1 && (
         <>
           <div className="w-px h-5 bg-slate-200" />
-          <div className="flex items-start gap-6">
-            {children.map(child => (
-              <div key={child.id} className="flex flex-col items-center">
-                <div className="w-px h-5 bg-slate-200" />
-                <OrgNodeBox node={child} allNodes={allNodes} assignments={assignments} members={members} externalContacts={externalContacts} canEdit={canEdit}
-                  onAddNode={onAddNode} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} onAddPerson={onAddPerson} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} />
-              </div>
-            ))}
-          </div>
+          <OrgNodeBox node={children[0]} allNodes={allNodes} assignments={assignments} members={members} externalContacts={externalContacts} canEdit={canEdit}
+            onAddNode={onAddNode} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} onAddPerson={onAddPerson} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} />
         </>
       )}
     </div>

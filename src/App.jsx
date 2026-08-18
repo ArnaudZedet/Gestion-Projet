@@ -2625,11 +2625,12 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
         <OrgNodeHeaderActions node={node} canEdit={canEdit} renaming={renaming} setRenaming={setRenaming} label={label} setLabel={setLabel}
           hasContent={children.length > 0 || people.length > 0} barColor={barColor} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
         <div className="p-3" style={{ background: `${barColor}26` }}>
-          <div className={people.length > 0 || canEdit ? 'pb-3 mb-3 border-b border-black/10' : ''}>
-            <div className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: barColor }}>Encadrement</div>
-            <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} onAddPerson={onAddPerson} grouped={false} />
-            {addPersonBlock}
-          </div>
+          {(people.length > 0 || canEdit) && (
+            <div className="pb-3 mb-3 border-b border-black/10">
+              <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} onAddPerson={onAddPerson} grouped={false} />
+              {addPersonBlock}
+            </div>
+          )}
           <div className="flex items-start gap-4">
             {children.map(child => (
               <OrgNodeBox key={child.id} node={child} allNodes={allNodes} assignments={assignments} members={members} externalContacts={externalContacts} canEdit={canEdit}
@@ -2799,11 +2800,31 @@ function ReferentApp({ session, onSignOut }) {
           { id: siege, parentId: '', label: 'Siège SIMAGO', sortOrder: 0 },
           { id: operationnel, parentId: siege, label: 'Opérationnel', sortOrder: 0 },
           { id: cabinet, parentId: operationnel, label: 'Cabinet', sortOrder: 0 },
-          { id: uid(), parentId: cabinet, label: 'IRM', sortOrder: 0 },
-          { id: uid(), parentId: cabinet, label: 'Scanner', sortOrder: 1 },
-          { id: uid(), parentId: cabinet, label: 'Radio / Sénologie', sortOrder: 2 },
+          { id: uid(), parentId: cabinet, label: 'Encadrement', sortOrder: 0 },
+          { id: uid(), parentId: cabinet, label: 'IRM', sortOrder: 1 },
+          { id: uid(), parentId: cabinet, label: 'Scanner', sortOrder: 2 },
+          { id: uid(), parentId: cabinet, label: 'Radio / Sénologie', sortOrder: 3 },
         ];
         insertRows('orgNodes', on);
+      } else if (matched?.accessLevel === 'manager') {
+        // Migration : sur un organigramme déjà créé, "Encadrement" existait
+        // comme simple bandeau des personnes posées directement sur Cabinet,
+        // au lieu d'une vraie boîte au même niveau qu'IRM/Scanner/Radio — on
+        // la crée une fois et on y déplace ces personnes.
+        const cabinetNode = on.find(n => n.label === 'Cabinet');
+        const hasEncadrement = cabinetNode && on.some(n => n.parentId === cabinetNode.id && n.label === 'Encadrement');
+        if (cabinetNode && !hasEncadrement) {
+          const encadrementId = uid();
+          const encadrementNode = { id: encadrementId, parentId: cabinetNode.id, label: 'Encadrement', sortOrder: -1 };
+          on = [...on, encadrementNode];
+          insertRows('orgNodes', [encadrementNode]);
+          const directOnCabinet = oa.filter(a => a.nodeId === cabinetNode.id);
+          if (directOnCabinet.length) {
+            const moved = directOnCabinet.map(a => ({ ...a, nodeId: encadrementId }));
+            oa = oa.map(a => moved.find(mv => mv.id === a.id) || a);
+            upsertRows('orgAssignments', moved);
+          }
+        }
       }
       setOrgNodes(on); setOrgAssignments(oa);
       if (matched) {

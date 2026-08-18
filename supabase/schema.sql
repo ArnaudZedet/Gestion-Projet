@@ -85,6 +85,7 @@ create table if not exists external_contacts (
   organization text,
   role text,
   email text,
+  phone text,
   updated_at timestamptz not null default now()
 );
 

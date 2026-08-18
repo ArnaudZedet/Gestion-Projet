@@ -321,8 +321,8 @@ const ROW_MAPPERS = {
   },
   externalContacts: {
     table: 'external_contacts',
-    toRow: (c) => ({ id: c.id, name: c.name, organization: c.organization || null, role: c.role || null, email: c.email || null }),
-    fromRow: (r) => ({ id: r.id, name: r.name, organization: r.organization || '', role: r.role || '', email: r.email || '' }),
+    toRow: (c) => ({ id: c.id, name: c.name, organization: c.organization || null, role: c.role || null, email: c.email || null, phone: c.phone || null }),
+    fromRow: (r) => ({ id: r.id, name: r.name, organization: r.organization || '', role: r.role || '', email: r.email || '', phone: r.phone || '' }),
   },
   orgNodes: {
     table: 'org_nodes',
@@ -1400,7 +1400,7 @@ function AppointmentModal({ appointment, members, externalContacts, readOnly, on
 }
 
 function ContactModal({ contact, onSave, onDelete, onClose }) {
-  const [form, setForm] = useState(contact || { name: '', organization: '', role: '', email: '' });
+  const [form, setForm] = useState(contact || { name: '', organization: '', role: '', email: '', phone: '' });
   return (
     <Modal title={contact ? 'Modifier le contact' : 'Nouveau contact externe'} onClose={onClose}>
       <Field label="Nom"><input className={inputCls} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Prénom Nom" /></Field>
@@ -1409,6 +1409,7 @@ function ContactModal({ contact, onSave, onDelete, onClose }) {
         <Field label="Fonction"><input className={inputCls} value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} /></Field>
         <Field label="Email"><input type="email" className={inputCls} value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></Field>
       </div>
+      <Field label="Téléphone"><input type="tel" className={inputCls} value={form.phone || ''} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="06 12 34 56 78" /></Field>
       <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
         {contact ? (
           <ConfirmButton onConfirm={() => onDelete(contact.id)} label="Retirer" confirmLabel="Retirer ce contact ?" />
@@ -2389,29 +2390,46 @@ function PrioritisationView({ tasks, members, openTask }) {
 // Étiquette de rôle sous une personne (ex. "Référente qualité") : stockée
 // sur l'affectation à la boîte (org_assignments), jamais sur la fiche
 // collaborateur ou le contact externe — la modifier ici ne les touche pas.
-function OrgPersonChip({ assignment, person, canEdit, nodes, showFunction, onUpdate, onRemove }) {
+// assignment.id === null : personne "automatique" (service coché sur sa
+// fiche), pas encore de ligne en base — n'existe que pour l'affichage tant
+// qu'on ne lui ajoute pas un rôle (ce qui crée alors la ligne réelle).
+function OrgPersonChip({ assignment, person, canEdit, nodes, showFunction, tint, onUpdate, onRemove, onMaterialize }) {
   const [editing, setEditing] = useState(false);
   const [role, setRole] = useState(assignment.roleLabel || '');
   if (!person) return null;
+  const auto = assignment.id === null;
   // Personnes externes (siège, prestataires...) : mêmes couleurs violettes
-  // que "Contacts externes" ailleurs dans l'app, pour les repérer d'un coup d'œil.
+  // que "Contacts externes" ailleurs dans l'app. Sinon, dans une boîte de
+  // service, la couleur du service teinte la personne (pas la boîte).
   const external = assignment.personType === 'external';
+  const cardStyle = external ? undefined : (tint ? { background: `${tint}1F`, borderColor: `${tint}66` } : undefined);
+  const nameStyle = !external && tint ? { color: tint } : undefined;
+  const saveRole = () => {
+    if (auto) onMaterialize(assignment.nodeId, assignment.personType, assignment.personId, role);
+    else onUpdate(assignment.id, { roleLabel: role });
+    setEditing(false);
+  };
   return (
-    <div className={`border rounded-lg px-2 py-1.5 group ${external ? 'bg-purple-50 border-purple-200' : 'bg-white border-slate-200'}`}>
+    <div className={`border rounded-lg px-2 py-1.5 group ${external ? 'bg-purple-50 border-purple-200' : (tint ? '' : 'bg-white border-slate-200')}`} style={cardStyle}>
       <div className="flex items-center justify-between gap-1.5">
         <div className="flex items-center gap-1.5 min-w-0">
           <Avatar name={person.name} size={16} />
-          <span className={`text-xs truncate ${external ? 'text-purple-700' : 'text-slate-700'}`}>{person.name}</span>
+          <span className={`text-xs truncate ${external ? 'text-purple-700' : 'text-slate-700'}`} style={nameStyle}>{person.name}</span>
         </div>
         {canEdit && (
           <div className="hidden group-hover:flex items-center gap-1 shrink-0">
             <button onClick={() => setEditing(v => !v)} className="text-slate-400 hover:text-slate-600"><Pencil size={11} /></button>
-            <button onClick={() => onRemove(assignment.id)} className="text-slate-400 hover:text-red-600"><X size={11} /></button>
+            {!auto && <button onClick={() => onRemove(assignment.id)} className="text-slate-400 hover:text-red-600"><X size={11} /></button>}
           </div>
         )}
       </div>
+      {person.email && <div className="text-[10px] text-slate-400 truncate">{person.email}</div>}
+      {external && person.phone && <div className="text-[10px] text-slate-400 truncate">{person.phone}</div>}
       {showFunction && person.role && (
         <div className="text-[10px] text-slate-400 mt-0.5">{person.role}</div>
+      )}
+      {auto && !editing && (
+        <div className="text-[9px] text-slate-400 italic mt-0.5">Auto (service coché sur la fiche)</div>
       )}
       {(assignment.roleLabel || editing) && !editing && (
         <div className="text-[10px] text-blue-600 mt-0.5">{assignment.roleLabel}</div>
@@ -2420,26 +2438,30 @@ function OrgPersonChip({ assignment, person, canEdit, nodes, showFunction, onUpd
         <div className="flex items-center gap-1 mt-1">
           <input autoFocus value={role} onChange={e => setRole(e.target.value)} placeholder="Rôle (ex. Référente qualité)"
             className="text-[11px] border border-slate-200 rounded px-1.5 py-0.5 flex-1 min-w-0 focus:outline-none" />
-          <select value={assignment.nodeId} onChange={e => onUpdate(assignment.id, { nodeId: e.target.value })} className="text-[10px] border border-slate-200 rounded px-1 py-0.5 max-w-[70px]" title="Déplacer vers…">
-            {nodes.map(n => <option key={n.id} value={n.id}>{n.label}</option>)}
-          </select>
-          <button onClick={() => { onUpdate(assignment.id, { roleLabel: role }); setEditing(false); }} className="text-blue-600"><Check size={13} /></button>
+          {!auto && (
+            <select value={assignment.nodeId} onChange={e => onUpdate(assignment.id, { nodeId: e.target.value })} className="text-[10px] border border-slate-200 rounded px-1 py-0.5 max-w-[70px]" title="Déplacer vers…">
+              {nodes.map(n => <option key={n.id} value={n.id}>{n.label}</option>)}
+            </select>
+          )}
+          <button onClick={saveRole} className="text-blue-600"><Check size={13} /></button>
         </div>
       )}
     </div>
   );
 }
 
-function OrgAddPersonForm({ members, externalContacts, onAdd, onCancel }) {
-  const [type, setType] = useState('member');
+function OrgAddPersonForm({ members, externalContacts, onlyExternal, onAdd, onCancel }) {
+  const [type, setType] = useState(onlyExternal ? 'external' : 'member');
   const [personId, setPersonId] = useState('');
   const options = type === 'member' ? members : externalContacts;
   return (
     <div className="flex items-center gap-1 mt-1.5">
-      <select value={type} onChange={e => { setType(e.target.value); setPersonId(''); }} className="text-[11px] border border-slate-200 rounded px-1 py-1">
-        <option value="member">Équipe</option>
-        <option value="external">Externe</option>
-      </select>
+      {!onlyExternal && (
+        <select value={type} onChange={e => { setType(e.target.value); setPersonId(''); }} className="text-[11px] border border-slate-200 rounded px-1 py-1">
+          <option value="member">Équipe</option>
+          <option value="external">Externe</option>
+        </select>
+      )}
       <select value={personId} onChange={e => setPersonId(e.target.value)} className="text-[11px] border border-slate-200 rounded px-1 py-1 flex-1 min-w-0">
         <option value="">— choisir —</option>
         {options.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -2458,14 +2480,14 @@ function orgPersonBucket(role) {
   if (role === 'Manipulateur' || role === 'Aide manipulateur') return 'Manipulateurs';
   return 'Autres';
 }
-function OrgPeopleList({ list, personOf, canEdit, allNodes, onUpdateAssignment, onRemoveAssignment, grouped }) {
+function OrgPeopleList({ list, personOf, canEdit, allNodes, onUpdateAssignment, onRemoveAssignment, onAddPerson, grouped, tint }) {
   if (list.length === 0) return <span className="text-[11px] text-slate-400">Personne ici</span>;
   if (!grouped) {
     return (
-      <div className="flex flex-col gap-1.5">
+      <div className="grid grid-cols-3 gap-1.5">
         {list.map(a => (
-          <OrgPersonChip key={a.id} assignment={a} person={personOf(a)} canEdit={canEdit} nodes={allNodes} showFunction
-            onUpdate={onUpdateAssignment} onRemove={onRemoveAssignment} />
+          <OrgPersonChip key={a.id || `auto-${a.personId}`} assignment={a} person={personOf(a)} canEdit={canEdit} nodes={allNodes} showFunction tint={tint}
+            onUpdate={onUpdateAssignment} onRemove={onRemoveAssignment} onMaterialize={onAddPerson} />
         ))}
       </div>
     );
@@ -2477,10 +2499,10 @@ function OrgPeopleList({ list, personOf, canEdit, allNodes, onUpdateAssignment, 
       {Object.entries(buckets).filter(([, l]) => l.length > 0).map(([label, l]) => (
         <div key={label}>
           <div className="text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1">{label}</div>
-          <div className="flex flex-col gap-1.5">
+          <div className="grid grid-cols-3 gap-1.5">
             {l.map(a => (
-              <OrgPersonChip key={a.id} assignment={a} person={personOf(a)} canEdit={canEdit} nodes={allNodes}
-                onUpdate={onUpdateAssignment} onRemove={onRemoveAssignment} />
+              <OrgPersonChip key={a.id || `auto-${a.personId}`} assignment={a} person={personOf(a)} canEdit={canEdit} nodes={allNodes} tint={tint}
+                onUpdate={onUpdateAssignment} onRemove={onRemoveAssignment} onMaterialize={onAddPerson} />
             ))}
           </div>
         </div>
@@ -2493,10 +2515,13 @@ function OrgPeopleList({ list, personOf, canEdit, allNodes, onUpdateAssignment, 
 // l'app (Radio/Scanner/IRM/Autre), reconnues par le nom de la boîte. Siège
 // et Cabinet ont leur propre couleur dédiée (pas des services).
 const ORG_NODE_COLORS = { 'Siège SIMAGO': '#0D9488', 'Cabinet': '#BE185D' };
+function orgNodeMatchedService(label) {
+  return PROJECT_SERVICES.find(s => s !== 'Autre' && label.toLowerCase().includes(s.toLowerCase())) || null;
+}
 function orgNodeServiceColor(label) {
   if (ORG_NODE_COLORS[label]) return ORG_NODE_COLORS[label];
-  const found = PROJECT_SERVICES.find(s => s !== 'Autre' && label.toLowerCase().includes(s.toLowerCase()));
-  return found ? SERVICE_COLORS[found] : null;
+  const service = orgNodeMatchedService(label);
+  return service ? SERVICE_COLORS[service] : null;
 }
 
 // Bandeau plein de couleur en haut de chaque boîte (façon fiche annuaire),
@@ -2535,7 +2560,17 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
   const [addingSibling, setAddingSibling] = useState(false);
   const [siblingLabel, setSiblingLabel] = useState('');
   const children = allNodes.filter(n => n.parentId === node.id).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-  const people = assignments.filter(a => a.nodeId === node.id);
+  const manualPeople = assignments.filter(a => a.nodeId === node.id);
+  // Boîte de service (IRM/Scanner/Radio) : les collaborateurs affectés à ce
+  // service dans leur fiche y apparaissent automatiquement, sans avoir à les
+  // ajouter à la main — seuls les contacts externes s'ajoutent manuellement.
+  const matchedService = orgNodeMatchedService(node.label);
+  const manualMemberIds = new Set(manualPeople.filter(a => a.personType === 'member').map(a => a.personId));
+  const autoPeople = matchedService
+    ? members.filter(m => (m.services || []).includes(matchedService) && !manualMemberIds.has(m.id))
+        .map(m => ({ id: null, nodeId: node.id, personType: 'member', personId: m.id, roleLabel: '' }))
+    : [];
+  const people = [...manualPeople, ...autoPeople];
   const personOf = (a) => a.personType === 'member' ? members.find(m => m.id === a.personId) : externalContacts.find(c => c.id === a.personId);
   // Plusieurs enfants (ex. Cabinet → IRM/Scanner/Radio) : ils sont dessinés
   // comme des colonnes à l'intérieur d'une seule grande boîte, plutôt que
@@ -2543,15 +2578,20 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
   const fanOut = children.length > 1;
   const color = orgNodeServiceColor(node.label);
   const barColor = color || '#1E293B';
-  const bodyBg = color ? `${color}33` : '#F8FAFC';
+  // Le fond de couleur ne marque que les boîtes structurelles (Cabinet,
+  // Siège) — les boîtes de service restent blanches, seules les personnes
+  // dedans portent la couleur (voir OrgPeopleList tint).
+  const bodyBg = matchedService ? '#fff' : (color ? `${color}33` : '#F8FAFC');
 
   const addPersonBlock = canEdit && (
     addingPerson ? (
-      <OrgAddPersonForm members={members} externalContacts={externalContacts}
+      <OrgAddPersonForm members={members} externalContacts={externalContacts} onlyExternal={!!matchedService}
         onAdd={(type, id) => { onAddPerson(node.id, type, id); setAddingPerson(false); }}
         onCancel={() => setAddingPerson(false)} />
     ) : (
-      <button onClick={() => setAddingPerson(true)} className="text-[11px] text-blue-600 hover:underline mt-1.5">+ Ajouter</button>
+      <button onClick={() => setAddingPerson(true)} className="text-[11px] text-blue-600 hover:underline mt-1.5">
+        + Ajouter{matchedService ? ' un externe' : ''}
+      </button>
     )
   );
   const addChildBlock = canEdit && (
@@ -2587,7 +2627,7 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
         <div className="p-3" style={{ background: `${barColor}26` }}>
           <div className={people.length > 0 || canEdit ? 'pb-3 mb-3 border-b border-black/10' : ''}>
             <div className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: barColor }}>Encadrement</div>
-            <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} grouped={false} />
+            <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} onAddPerson={onAddPerson} grouped={false} />
             {addPersonBlock}
           </div>
           <div className="flex items-start gap-4">
@@ -2604,11 +2644,12 @@ function OrgNodeBox({ node, allNodes, assignments, members, externalContacts, ca
 
   return (
     <div className="flex flex-col items-center">
-      <div className="rounded-xl overflow-hidden min-w-[190px]" style={{ border: `2px solid ${barColor}` }}>
+      <div className={`rounded-xl overflow-hidden ${matchedService ? 'min-w-[320px]' : 'min-w-[190px]'}`} style={{ border: `2px solid ${barColor}` }}>
         <OrgNodeHeaderActions node={node} canEdit={canEdit} renaming={renaming} setRenaming={setRenaming} label={label} setLabel={setLabel}
           hasContent={children.length > 0 || people.length > 0} barColor={barColor} onRenameNode={onRenameNode} onDeleteNode={onDeleteNode} />
         <div className="p-3" style={{ background: bodyBg }}>
-          <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} grouped={children.length === 0} />
+          <OrgPeopleList list={people} personOf={personOf} canEdit={canEdit} allNodes={allNodes} onUpdateAssignment={onUpdateAssignment} onRemoveAssignment={onRemoveAssignment} onAddPerson={onAddPerson}
+            grouped={children.length === 0} tint={matchedService ? color : null} />
           {addPersonBlock}
         </div>
       </div>
@@ -2858,8 +2899,8 @@ function ReferentApp({ session, onSignOut }) {
     setOrgAssignments(prev => prev.filter(a => !ids.has(a.nodeId)));
     warnIfFailed(await deleteRow('orgNodes', nodeId), 'La suppression de la boîte');
   };
-  const addOrgPerson = async (nodeId, personType, personId) => {
-    const assignment = { id: uid(), nodeId, personType, personId, roleLabel: '', sortOrder: orgAssignments.filter(a => a.nodeId === nodeId).length };
+  const addOrgPerson = async (nodeId, personType, personId, roleLabel = '') => {
+    const assignment = { id: uid(), nodeId, personType, personId, roleLabel, sortOrder: orgAssignments.filter(a => a.nodeId === nodeId).length };
     setOrgAssignments(prev => [...prev, assignment]);
     warnIfFailed(await upsertRow('orgAssignments', assignment), "L'ajout dans l'organigramme");
   };

@@ -1077,7 +1077,7 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 /*  Fiche projet — création avec équipe + conduite de projet automatique  */
 /* ---------------------------------------------------------------------- */
 
-function ProjectModal({ project, members, externalContacts, tasks, currentMemberId, perm, onSave, onDelete, onDuplicate, onClose }) {
+function ProjectModal({ project, members, externalContacts, tasks, projects, currentMemberId, perm, onSave, onDelete, onDuplicate, onClose }) {
   const isNew = !project;
   const locked = !canEditProject(project, currentMemberId, perm.isManager);
   const [form, setForm] = useState(project || { name: '', description: '', service: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', priority: 'normale', importance: 'moyenne', repeatUnit: 'aucune', repeatEvery: 1, responsibleIds: [], rotateResponsible: false, responsibleRotationPool: [] });
@@ -1126,7 +1126,18 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
         const mm = members.find(x => x.id === mid);
         return !(mm?.alwaysApprover || mm?.role === 'Manager');
       });
-      const pool = shuffleArray(eligible.length > 0 ? eligible : projectObj.teamIds);
+      let pool = shuffleArray(eligible.length > 0 ? eligible : projectObj.teamIds);
+      // Comme au renouvellement : parmi les candidats, on prend celui qui a
+      // le moins de projets déjà en cours sur la même période — sinon deux
+      // projets créés séparément (pas le même cycle) peuvent tomber tous
+      // les deux sur la même personne par pur hasard.
+      if (projectObj.startDate && projectObj.endDate && projects && pool.length > 1) {
+        const loadOf = (id) => projects.filter(p => (p.responsibleIds || []).includes(id) && p.status !== 'termine' &&
+          p.startDate && p.endDate && p.startDate <= projectObj.endDate && p.endDate >= projectObj.startDate).length;
+        let bestIdx = 0, bestLoad = Infinity;
+        pool.forEach((id, i) => { const l = loadOf(id); if (l < bestLoad) { bestLoad = l; bestIdx = i; } });
+        if (bestIdx > 0) pool = [pool[bestIdx], ...pool.slice(0, bestIdx), ...pool.slice(bestIdx + 1)];
+      }
       projectObj.responsibleIds = [pool[0]];
       projectObj.responsibleRotationPool = pool.slice(1);
     }
@@ -3649,7 +3660,7 @@ function ReferentApp({ session, onSignOut }) {
 
       {taskModal && <TaskModal key={taskModal.task?.id || 'new'} task={taskModal.task} initialProjectId={taskModal.presetProjectId} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} onSave={saveTask} onDelete={deleteTask} onClaim={claimTask} onDuplicate={duplicateTask} onClose={() => setTaskModal(null)} />}
       {memberModal && perm.canManageTeam && <MemberModal member={memberModal.member} onSave={saveMember} onDelete={deleteMember} onClose={() => setMemberModal(null)} />}
-      {projectModal && perm.canCreateProject && <ProjectModal key={projectModal.project?.id || 'new'} project={projectModal.project} members={members} externalContacts={externalContacts} tasks={tasks} currentMemberId={connectedAs} perm={perm} onSave={saveProject} onDelete={deleteProject} onDuplicate={duplicateProject} onClose={() => setProjectModal(null)} />}
+      {projectModal && perm.canCreateProject && <ProjectModal key={projectModal.project?.id || 'new'} project={projectModal.project} members={members} externalContacts={externalContacts} tasks={tasks} projects={projects} currentMemberId={connectedAs} perm={perm} onSave={saveProject} onDelete={deleteProject} onDuplicate={duplicateProject} onClose={() => setProjectModal(null)} />}
       {apptModal && <AppointmentModal appointment={apptModal.appointment} members={members} externalContacts={externalContacts} readOnly={!perm.canManageAppointments} onSave={saveAppt} onDelete={deleteAppt} onClose={() => setApptModal(null)} />}
       {contactModal && perm.canManageContacts && <ContactModal contact={contactModal.contact} onSave={saveContact} onDelete={deleteContact} onClose={() => setContactModal(null)} />}
       {requestModal && <RequestModal members={members} externalContacts={externalContacts} projects={projects} currentMemberId={connectedAs} onSave={saveRequest} onClose={() => setRequestModal(null)} />}

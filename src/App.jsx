@@ -1562,7 +1562,7 @@ function Dashboard({ tasks, members, projects, appointments, connectedAs, openTa
 
   const activeProjects = projects.filter(p => p.status !== 'termine');
   const projectsByMember = members.map(m => {
-    const mine = activeProjects.filter(p => (p.responsibleIds || []).includes(m.id) || (p.teamIds || []).includes(m.id));
+    const mine = activeProjects.filter(p => (p.responsibleIds || []).includes(m.id));
     return { member: m, projects: mine };
   }).sort((a, b) => b.projects.length - a.projects.length);
 
@@ -1625,12 +1625,11 @@ function Dashboard({ tasks, members, projects, appointments, connectedAs, openTa
                     <div className="pl-9 pb-2.5 space-y-1">
                       {w.projects.map(p => {
                         const color = (p.service && SERVICE_COLORS[p.service]) || p.color || '#64748B';
-                        const amResponsible = (p.responsibleIds || []).includes(w.member.id);
                         return (
                           <button key={p.id} onClick={() => onOpenProject && onOpenProject(p)}
                             className="w-full flex items-center gap-2 text-left px-2 py-1.5 rounded-lg hover:bg-slate-50">
                             <span style={{ background: color }} className="w-1.5 h-1.5 rounded-full shrink-0" />
-                            <span className="text-xs font-medium text-slate-600 truncate flex-1">{p.name}{amResponsible ? ' · Responsable' : ''}</span>
+                            <span className="text-xs font-medium text-slate-600 truncate flex-1">{p.name}</span>
                             <span className="text-[11px] text-slate-400 shrink-0">{p.startDate ? fmtDate(p.startDate) : '?'} → {p.endDate ? fmtDate(p.endDate) : '?'}</span>
                           </button>
                         );

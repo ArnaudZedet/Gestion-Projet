@@ -6,7 +6,7 @@ import {
   Search, Loader2, Inbox, GanttChartSquare, Grid3x3, MapPin, Lock, Target, Repeat,
   ClipboardList, Send, XCircle, Building2, Mail, Check,
   Flag, PlayCircle, ShieldAlert, GraduationCap, Milestone as MilestoneIcon, Megaphone, ClipboardCheck,
-  ChevronLeft, ChevronRight, FolderPlus, List as ListIcon, Download, Copy, Upload, MessageSquare, Network
+  ChevronLeft, ChevronRight, FolderPlus, List as ListIcon, Download, Copy, Upload, MessageSquare, Network, MessageCircle
 } from 'lucide-react';
 
 /* ---------------------------------------------------------------------- */
@@ -334,6 +334,11 @@ const ROW_MAPPERS = {
     toRow: (a) => ({ id: a.id, node_id: a.nodeId, person_type: a.personType, person_id: a.personId, role_label: a.roleLabel || null, sort_order: a.sortOrder || 0 }),
     fromRow: (r) => ({ id: r.id, nodeId: r.node_id, personType: r.person_type, personId: r.person_id, roleLabel: r.role_label || '', sortOrder: r.sort_order || 0 }),
   },
+  transmissions: {
+    table: 'transmissions',
+    toRow: (t) => ({ id: t.id, service: t.service, function_group: t.functionGroup, author_id: t.authorId, message: t.message }),
+    fromRow: (r) => ({ id: r.id, service: r.service, functionGroup: r.function_group, authorId: r.author_id, message: r.message, createdAt: r.created_at }),
+  },
   taskRequests: {
     table: 'task_requests',
     toRow: (r) => ({
@@ -527,7 +532,7 @@ function Avatar({ name, size = 32 }) {
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   const hue = Math.abs(hash) % 360;
   return (
-    <div style={{ width: size, height: size, background: `hsl(${hue} 55% 40%)`, fontSize: size * 0.38 }}
+    <div title={name} style={{ width: size, height: size, background: `hsl(${hue} 55% 40%)`, fontSize: size * 0.38 }}
       className="rounded-full flex items-center justify-center text-white font-semibold shrink-0">
       {initials}
     </div>
@@ -2384,6 +2389,74 @@ function PrioritisationView({ tasks, members, openTask }) {
 }
 
 /* ---------------------------------------------------------------------- */
+/*  Transmissions                                                         */
+/* ---------------------------------------------------------------------- */
+
+function TransmissionsView({ transmissions, members, currentMemberId, onPost }) {
+  const channels = [
+    ...SERVICES.map(s => ({ service: s, functionGroup: 'Secrétaire', label: `Secrétaires ${s}` })),
+    ...SERVICES.map(s => ({ service: s, functionGroup: 'Manipulateur', label: `Manipulateurs ${s}` })),
+  ];
+  const currentMemberObj = members.find(m => m.id === currentMemberId);
+  const myChannel = channels.find(c => (currentMemberObj?.services || []).includes(c.service) &&
+    (currentMemberObj?.role === c.functionGroup || (c.functionGroup === 'Manipulateur' && currentMemberObj?.role === 'Aide manipulateur')));
+  const [selected, setSelected] = useState(myChannel || channels[0]);
+  const [message, setMessage] = useState('');
+  const channelMsgs = transmissions
+    .filter(t => t.service === selected.service && t.functionGroup === selected.functionGroup)
+    .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+  const fmtWhen = (iso) => iso ? new Date(iso).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+  const handleSend = () => {
+    if (!message.trim()) return;
+    onPost(selected.service, selected.functionGroup, message.trim());
+    setMessage('');
+  };
+  return (
+    <div className="flex gap-4 items-start">
+      <div className="w-56 shrink-0 space-y-1.5">
+        {channels.map(c => {
+          const active = selected.service === c.service && selected.functionGroup === c.functionGroup;
+          return (
+            <button key={`${c.functionGroup}-${c.service}`} onClick={() => setSelected(c)}
+              className={`w-full text-left px-3 py-2 rounded-lg text-sm border ${active ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+              {c.label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex-1 bg-white rounded-2xl border border-slate-100 flex flex-col" style={{ minHeight: 520 }}>
+        <div className="px-4 py-3 border-b border-slate-100 font-semibold text-slate-700" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>{selected.label}</div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {channelMsgs.length === 0 && <EmptyState icon={MessageCircle} title="Aucun message" subtitle="Soyez la première personne à écrire ici." />}
+          {channelMsgs.map(t => {
+            const author = members.find(m => m.id === t.authorId);
+            return (
+              <div key={t.id} className="flex gap-2.5">
+                <Avatar name={author?.name || '?'} size={28} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-xs font-semibold text-slate-700">{author?.name || 'Ancien collaborateur'}</span>
+                    <span className="text-[11px] text-slate-400">{fmtWhen(t.createdAt)}</span>
+                  </div>
+                  <div className="text-sm text-slate-600 whitespace-pre-wrap">{t.message}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="p-3 border-t border-slate-100 flex items-center gap-2">
+          <input value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSend(); }}
+            placeholder="Écrire un message pour ce service…" className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+          <button onClick={handleSend} disabled={!message.trim()} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg flex items-center gap-1.5">
+            <Send size={14} /> Envoyer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
 /*  Organigramme                                                          */
 /* ---------------------------------------------------------------------- */
 
@@ -2767,6 +2840,7 @@ function navFor(perm) {
   if (perm.isManager) nav.push({ id: 'dashboard', label: "Vue d'ensemble", Icon: LayoutDashboard, accent: '#60A5FA' });
   nav.push({ id: 'tasks', label: perm.isManager ? 'Tâches et projets' : 'Mes tâches et projets', Icon: ListChecks, accent: '#818CF8' });
   nav.push({ id: 'planning', label: 'Planning', Icon: CalendarDays, accent: '#38BDF8' });
+  nav.push({ id: 'transmissions', label: 'Transmissions', Icon: MessageCircle, accent: '#0EA5E9' });
   if (perm.isReferent) {
     nav.push({ id: 'gantt', label: 'Durée des projets', Icon: GanttChartSquare, accent: '#A78BFA' });
     nav.push({ id: 'raci', label: 'Rôle des participants', Icon: Grid3x3, accent: '#2DD4BF' });
@@ -2797,6 +2871,7 @@ function ReferentApp({ session, onSignOut }) {
   const [taskRequests, setTaskRequests] = useState([]);
   const [orgNodes, setOrgNodes] = useState([]);
   const [orgAssignments, setOrgAssignments] = useState([]);
+  const [transmissions, setTransmissions] = useState([]);
   const [view, setView] = useState('tasks');
   const [connectedAs, setConnectedAs] = useState('');
   const [taskModal, setTaskModal] = useState(null);
@@ -2828,6 +2903,7 @@ function ReferentApp({ session, onSignOut }) {
       const m = data.members.items, p = data.projects.items, t = data.tasks.items, a = data.appointments.items, ec = data.externalContacts.items, tr = data.taskRequests.items;
       let on = data.orgNodes.items, oa = data.orgAssignments.items;
       setMembers(m); setProjects(p); setTasks(t); setAppointments(a); setExternalContacts(ec); setTaskRequests(tr);
+      setTransmissions(data.transmissions.items);
       const matched = m.find(x => (x.email || '').toLowerCase() === myEmail);
       // Squelette par défaut de l'organigramme, créé une seule fois par un
       // administrateur si la table est encore vide.
@@ -2942,6 +3018,23 @@ function ReferentApp({ session, onSignOut }) {
       });
       return res.ok;
     } catch { return false; }
+  };
+
+  // Transmissions : un canal par service × métier (Secrétaires/Manipulateurs
+  // Radio/Scanner/IRM). Chaque nouveau message notifie par email les membres
+  // de ce canal (regroupé dans le digest quotidien, comme les autres notifs).
+  const postTransmission = async (service, functionGroup, message) => {
+    const t = { id: uid(), service, functionGroup, authorId: connectedAs, message, createdAt: new Date().toISOString() };
+    setTransmissions(prev => [...prev, t]);
+    warnIfFailed(await upsertRow('transmissions', t), 'Le message');
+    const recipients = members.filter(m => m.id !== connectedAs && (m.services || []).includes(service) &&
+      (m.role === functionGroup || (functionGroup === 'Manipulateur' && m.role === 'Aide manipulateur')) && m.email)
+      .map(m => m.email);
+    if (recipients.length) {
+      const channelLabel = `${functionGroup === 'Secrétaire' ? 'Secrétaires' : 'Manipulateurs'} ${service}`;
+      notifyByEmail(recipients, `Nouvelle transmission — ${channelLabel}`,
+        `<p><strong>${currentMember?.name || 'Quelqu\'un'}</strong> a laissé un message dans la transmission <strong>${channelLabel}</strong> :</p><p>${message.replace(/\n/g, '<br/>')}</p>`);
+    }
   };
 
   // Organigramme : boîtes hiérarchiques (org_nodes) + personnes placées
@@ -3512,6 +3605,7 @@ function ReferentApp({ session, onSignOut }) {
           {view === 'dashboard' && <Dashboard tasks={tasks} members={members} projects={projects} appointments={appointments} connectedAs={connectedAs} openTask={(t) => setTaskModal({ task: t })} onClaim={claimTask} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'tasks' && <TasksView tasks={scopedTasks} members={members} projects={scopedProjects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={(projectId) => setTaskModal({ task: null, presetProjectId: projectId })} newProject={() => setProjectModal({ project: null })} editProject={(p) => setProjectModal({ project: p })} />}
           {view === 'planning' && <PlanningView members={members} tasks={scopedTasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
+          {view === 'transmissions' && <TransmissionsView transmissions={transmissions} members={members} currentMemberId={connectedAs} onPost={postTransmission} />}
           {view === 'gantt' && <GanttView tasks={scopedTasks} members={members} projects={scopedProjects} openTask={(t) => setTaskModal({ task: t })} />}
           {view === 'raci' && <RaciView tasks={scopedTasks} members={members} perm={perm} currentMemberId={connectedAs} projects={scopedProjects} updateRaci={updateRaci} />}
           {view === 'priorisation' && <PrioritisationView tasks={tasks} members={members} openTask={(t) => setTaskModal({ task: t })} />}

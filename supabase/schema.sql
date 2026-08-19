@@ -131,6 +131,18 @@ create table if not exists org_assignments (
   updated_at timestamptz not null default now()
 );
 
+-- Cahier de transmission par service, séparé Manipulateurs / Secrétaires
+-- (6 canaux : Secrétaires et Manipulateurs × Radio/Scanner/IRM). Chaque
+-- nouveau message notifie par email les membres de ce canal.
+create table if not exists transmissions (
+  id text primary key,
+  service text not null,
+  function_group text not null,
+  author_id text not null,
+  message text not null,
+  created_at timestamptz not null default now()
+);
+
 -- File d'attente des notifications par email : chaque notification (affectation
 -- à un projet, tâche assignée, rotation de responsable...) est déposée ici au
 -- lieu d'être envoyée immédiatement, puis regroupée en un seul email par
@@ -150,7 +162,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['members','projects','tasks','appointments','external_contacts','task_requests','notification_queue','org_nodes','org_assignments']
+  foreach t in array array['members','projects','tasks','appointments','external_contacts','task_requests','notification_queue','org_nodes','org_assignments','transmissions']
   loop
     execute format('alter table %I enable row level security;', t);
     execute format('drop policy if exists "authenticated all" on %I;', t);

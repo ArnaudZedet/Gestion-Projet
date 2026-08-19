@@ -293,8 +293,8 @@ const ROW_MAPPERS = {
   },
   projects: {
     table: 'projects',
-    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, service: p.service || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null, start_reminder_sent: !!p.startReminderSent, responsible_ids: p.responsibleIds || [], rotate_responsible: !!p.rotateResponsible, responsible_rotation_pool: p.responsibleRotationPool || [], pending_approval: !!p.pendingApproval, created_by: p.createdBy || null }),
-    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', service: r.service || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null, startReminderSent: !!r.start_reminder_sent, responsibleIds: (r.responsible_ids && r.responsible_ids.length ? r.responsible_ids : (r.responsible_id ? [r.responsible_id] : [])), rotateResponsible: !!r.rotate_responsible, responsibleRotationPool: r.responsible_rotation_pool || [], pendingApproval: !!r.pending_approval, createdBy: r.created_by || '' }),
+    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, service: p.service || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', priority: p.priority || 'normale', importance: p.importance || 'moyenne', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null, start_reminder_sent: !!p.startReminderSent, responsible_ids: p.responsibleIds || [], rotate_responsible: !!p.rotateResponsible, responsible_rotation_pool: p.responsibleRotationPool || [], pending_approval: !!p.pendingApproval, created_by: p.createdBy || null }),
+    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', service: r.service || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', priority: r.priority || 'normale', importance: r.importance || 'moyenne', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null, startReminderSent: !!r.start_reminder_sent, responsibleIds: (r.responsible_ids && r.responsible_ids.length ? r.responsible_ids : (r.responsible_id ? [r.responsible_id] : [])), rotateResponsible: !!r.rotate_responsible, responsibleRotationPool: r.responsible_rotation_pool || [], pendingApproval: !!r.pending_approval, createdBy: r.created_by || '' }),
   },
   tasks: {
     table: 'tasks',
@@ -1080,7 +1080,7 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 function ProjectModal({ project, members, externalContacts, tasks, currentMemberId, perm, onSave, onDelete, onDuplicate, onClose }) {
   const isNew = !project;
   const locked = !canEditProject(project, currentMemberId, perm.isManager);
-  const [form, setForm] = useState(project || { name: '', description: '', service: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', repeatUnit: 'aucune', repeatEvery: 1, responsibleIds: [], rotateResponsible: false, responsibleRotationPool: [] });
+  const [form, setForm] = useState(project || { name: '', description: '', service: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', priority: 'normale', importance: 'moyenne', repeatUnit: 'aucune', repeatEvery: 1, responsibleIds: [], rotateResponsible: false, responsibleRotationPool: [] });
   const toggleResponsible = (id) => setForm(f => ({ ...f, responsibleIds: (f.responsibleIds || []).includes(id) ? f.responsibleIds.filter(x => x !== id) : [...(f.responsibleIds || []), id] }));
   const [genGovernance, setGenGovernance] = useState(false);
   // Retirer quelqu'un de l'équipe le retire aussi du poste de responsable
@@ -1218,6 +1218,21 @@ function ProjectModal({ project, members, externalContacts, tasks, currentMember
           <button type="button" disabled={locked} onClick={() => setForm({ ...form, status: 'termine' })} className={`flex-1 py-2 disabled:opacity-60 ${form.status === 'termine' ? 'bg-green-600 text-white' : 'bg-white text-slate-500'}`}>Terminé</button>
         </div>
       </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Priorité (urgence)">
+          <select disabled={locked || !perm.isManager} className={inputCls} value={form.priority || 'normale'} onChange={e => setForm({ ...form, priority: e.target.value })}>
+            {PRIORITIES.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+          {!perm.isManager && <div className="text-[11px] text-slate-400 mt-1">Réservé aux administrateurs</div>}
+        </Field>
+        <Field label="Importance (impact)">
+          <select disabled={locked || !perm.isManager} className={inputCls} value={form.importance || 'moyenne'} onChange={e => setForm({ ...form, importance: e.target.value })}>
+            {IMPORTANCE.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
+          </select>
+          {!perm.isManager && <div className="text-[11px] text-slate-400 mt-1">Réservé aux administrateurs</div>}
+        </Field>
+      </div>
+      <div className="text-xs text-slate-400 -mt-2.5 mb-3.5">Détermine automatiquement le classement du projet dans l'onglet Priorisation.</div>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Début du projet"><input disabled={locked} type="date" min={form.id ? undefined : todayISO()} className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} /></Field>
         <Field label="Fin du projet"><input disabled={locked} type="date" min={form.startDate || undefined} className={inputCls} value={form.endDate || ''} onChange={e => setForm({ ...form, endDate: e.target.value })} /></Field>
@@ -2280,22 +2295,23 @@ function GanttView({ tasks, projects, members, openTask }) {
 /*  Priorisation (matrice urgence × importance)                           */
 /* ---------------------------------------------------------------------- */
 
-function PriorityCard({ t, members, openTask }) {
-  const responsibles = responsibleIdsOf(t).map(id => members.find(m => m.id === id)).filter(Boolean);
+function ProjectPriorityCard({ p, members, onOpenProject }) {
+  const responsibles = (p.responsibleIds || []).map(id => members.find(m => m.id === id)).filter(Boolean);
+  const color = (p.service && SERVICE_COLORS[p.service]) || p.color || '#64748B';
   return (
-    <button onClick={() => openTask(t)} className="w-full text-left bg-white/70 hover:bg-white rounded-xl px-3 py-2.5 border border-slate-100">
+    <button onClick={() => onOpenProject(p)} className="w-full text-left bg-white/70 hover:bg-white rounded-xl px-3 py-2.5 border border-slate-100">
       <div className="text-xs font-medium text-slate-700 truncate mb-1.5 flex items-center gap-1.5">
-        {t.isGovernance && <GovIcon id={t.governanceType} size={11} className="text-purple-500 shrink-0" />}{t.title}
+        <span style={{ background: color }} className="w-2 h-2 rounded-full shrink-0" />{p.name}
       </div>
       <div className="flex items-center gap-1.5 flex-wrap">
-        <ScopeTag id={t.scope} />
+        {p.service && <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color }}>{p.service}</span>}
         {responsibles[0] && <span className="flex items-center gap-1 text-[10px] text-slate-400"><Avatar name={responsibles[0].name} size={16} />{responsibles[0].name.split(' ')[0]}</span>}
-        <span className="ml-auto"><DeadlineBadge deadline={t.deadline} status={t.status} /></span>
+        <span className="ml-auto text-[10px] text-slate-400">{p.endDate ? `Fin ${fmtDate(p.endDate)}` : 'Sans échéance'}</span>
       </div>
     </button>
   );
 }
-function Quadrant({ title, subtitle, accent, bg, list, members, openTask }) {
+function Quadrant({ title, subtitle, accent, bg, list, renderItem }) {
   return (
     <div style={{ background: bg, border: `1.5px solid ${accent}55` }} className="rounded-2xl p-4 min-h-[220px]">
       <div className="flex items-center justify-between mb-3">
@@ -2307,32 +2323,30 @@ function Quadrant({ title, subtitle, accent, bg, list, members, openTask }) {
       </div>
       <div className="space-y-1.5">
         {list.length === 0 && <div className="text-xs text-slate-400 px-1">Rien ici</div>}
-        {list.map(t => <PriorityCard key={t.id} t={t} members={members} openTask={openTask} />)}
+        {list.map(renderItem)}
       </div>
     </div>
   );
 }
-function PrioritisationView({ tasks, members, openTask }) {
-  const [scopeFilter, setScopeFilter] = useState('all');
-  const active = tasks.filter(t => t.status !== 'termine' && (scopeFilter === 'all' || t.scope === scopeFilter));
-  const sortByDeadline = (a, b) => (a.deadline || '9999').localeCompare(b.deadline || '9999');
-  const q1 = active.filter(t => isUrgent(t) && isImportant(t)).sort(sortByDeadline);
-  const q2 = active.filter(t => !isUrgent(t) && isImportant(t)).sort(sortByDeadline);
-  const q3 = active.filter(t => isUrgent(t) && !isImportant(t)).sort(sortByDeadline);
-  const q4 = active.filter(t => !isUrgent(t) && !isImportant(t)).sort(sortByDeadline);
+// Classe automatiquement les projets (pas les tâches) selon la Priorité et
+// l'Importance fixées à leur création — le classement se met à jour tout
+// seul dès qu'on modifie ces champs sur le projet.
+function PrioritisationView({ projects, members, onOpenProject }) {
+  const active = projects.filter(p => p.status !== 'termine');
+  const sortByEnd = (a, b) => (a.endDate || '9999').localeCompare(b.endDate || '9999');
+  const q1 = active.filter(p => isUrgent(p) && isImportant(p)).sort(sortByEnd);
+  const q2 = active.filter(p => !isUrgent(p) && isImportant(p)).sort(sortByEnd);
+  const q3 = active.filter(p => isUrgent(p) && !isImportant(p)).sort(sortByEnd);
+  const q4 = active.filter(p => !isUrgent(p) && !isImportant(p)).sort(sortByEnd);
+  const renderItem = (p) => <ProjectPriorityCard key={p.id} p={p} members={members} onOpenProject={onOpenProject} />;
   return (
     <div>
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        <select className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 bg-white focus:outline-none" value={scopeFilter} onChange={e => setScopeFilter(e.target.value)}>
-          <option value="all">Toutes les envergures</option>{SCOPES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-        </select>
-        <span className="text-xs text-slate-400">Une tâche de 2h et un projet de plusieurs mois se classent selon le même critère : urgence × importance.</span>
-      </div>
+      <div className="text-xs text-slate-400 mb-4">Le classement est automatique, d'après la Priorité et l'Importance fixées à la création du projet (modifiables par un administrateur depuis la fiche projet).</div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Quadrant title="Faire maintenant" subtitle="Urgent et important" accent="#B42318" bg="#FBD5D1" list={q1} members={members} openTask={openTask} />
-        <Quadrant title="Planifier" subtitle="Important, pas urgent" accent="#1849A9" bg="#C9DBFD" list={q2} members={members} openTask={openTask} />
-        <Quadrant title="Déléguer" subtitle="Urgent, peu important" accent="#B54708" bg="#FBE3AE" list={q3} members={members} openTask={openTask} />
-        <Quadrant title="Reporter / éliminer" subtitle="Ni urgent ni important" accent="#475467" bg="#DBDFE3" list={q4} members={members} openTask={openTask} />
+        <Quadrant title="Faire maintenant" subtitle="Urgent et important" accent="#B42318" bg="#FBD5D1" list={q1} renderItem={renderItem} />
+        <Quadrant title="Planifier" subtitle="Important, pas urgent" accent="#1849A9" bg="#C9DBFD" list={q2} renderItem={renderItem} />
+        <Quadrant title="Déléguer" subtitle="Urgent, peu important" accent="#B54708" bg="#FBE3AE" list={q3} renderItem={renderItem} />
+        <Quadrant title="Reporter / éliminer" subtitle="Ni urgent ni important" accent="#475467" bg="#DBDFE3" list={q4} renderItem={renderItem} />
       </div>
     </div>
   );
@@ -3608,7 +3622,7 @@ function ReferentApp({ session, onSignOut }) {
           {view === 'planning' && <PlanningView members={members} tasks={scopedTasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
           {view === 'transmissions' && <TransmissionsView transmissions={transmissions} members={members} currentMemberId={connectedAs} onPost={postTransmission} />}
           {view === 'gantt' && <GanttView tasks={scopedTasks} members={members} projects={scopedProjects} openTask={(t) => setTaskModal({ task: t })} />}
-          {view === 'priorisation' && <PrioritisationView tasks={tasks} members={members} openTask={(t) => setTaskModal({ task: t })} />}
+          {view === 'priorisation' && <PrioritisationView projects={scopedProjects} members={members} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} onImport={importMembers} />}
           {view === 'contacts' && <ContactsView contacts={externalContacts} perm={perm} editContact={(c) => setContactModal({ contact: c })} newContact={() => setContactModal({ contact: null })} />}
           {view === 'orgchart' && <OrgChartView nodes={orgNodes} assignments={orgAssignments} members={members} externalContacts={externalContacts} perm={perm}

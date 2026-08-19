@@ -30,6 +30,8 @@ create table if not exists projects (
   start_date date,
   end_date date,
   status text not null default 'en_cours',
+  priority text not null default 'normale',
+  importance text not null default 'moyenne',
   repeat_unit text not null default 'aucune',
   repeat_every int not null default 1,
   late_notified_at timestamptz,

@@ -2049,7 +2049,10 @@ function monthMatrix(year, month) {
 }
 const isoOfDate = (d) => d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : null;
 
-function MonthCalendar({ year, month, dayTasks, dayAppts, onPrev, onNext, openTask, openAppt }) {
+// Grille mensuelle générique — le contenu de chaque case (tâches/RDV pour
+// Planning, projets actifs ce jour-là pour Durée des projets...) est fourni
+// par renderDay(iso), pour réutiliser la même mise en page partout.
+function MonthCalendar({ year, month, onPrev, onNext, renderDay }) {
   const cells = monthMatrix(year, month);
   const monthLabel = new Date(year, month, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
   return (
@@ -2065,26 +2068,11 @@ function MonthCalendar({ year, month, dayTasks, dayAppts, onPrev, onNext, openTa
       <div className="grid grid-cols-7 gap-1">
         {cells.map((d, i) => {
           const iso = isoOfDate(d);
-          const ts = iso ? (dayTasks[iso] || []) : [];
-          const as = iso ? (dayAppts[iso] || []) : [];
           const today = iso === todayISO();
           return (
             <div key={i} className={`min-h-[76px] rounded-lg border p-1 ${d ? 'border-slate-100' : 'border-transparent'} ${today ? 'bg-blue-50/50 border-blue-200' : ''}`}>
               {d && <div className={`text-[10px] mb-1 ${today ? 'text-blue-600 font-semibold' : 'text-slate-400'}`}>{d.getDate()}</div>}
-              <div className="space-y-0.5">
-                {as.map(a => (
-                  <button key={a.id} onClick={() => openAppt(a)} className="w-full text-left text-[10px] leading-tight bg-blue-100 text-blue-700 rounded px-1 py-0.5 block whitespace-normal break-words">{a.time} {a.title}</button>
-                ))}
-                {ts.map(t => {
-                  const pr = PRIORITIES.find(p => p.id === t.priority);
-                  const repeating = t.repeatUnit && t.repeatUnit !== 'aucune';
-                  return (
-                    <button key={t.id} onClick={() => openTask(t)} style={{ background: pr.bg, color: pr.color }} className="w-full text-left text-[10px] leading-tight rounded px-1 py-0.5 flex items-start gap-0.5 whitespace-normal break-words">
-                      {repeating && <Repeat size={9} className="shrink-0 mt-0.5" />}<span>{t.time ? `${t.time} ` : ''}{t.title}</span>
-                    </button>
-                  );
-                })}
-              </div>
+              <div className="space-y-0.5">{d && renderDay(iso)}</div>
             </div>
           );
         })}
@@ -2164,10 +2152,25 @@ function PlanningView({ members, tasks, appointments, externalContacts, perm, cu
           </div>
         )}
         <MonthCalendar
-          year={cursor.year} month={cursor.month} dayTasks={dayTasks} dayAppts={dayAppts}
+          year={cursor.year} month={cursor.month}
           onPrev={() => setCursor(c => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 })}
           onNext={() => setCursor(c => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 })}
-          openTask={openTask} openAppt={openAppt}
+          renderDay={(iso) => (
+            <>
+              {(dayAppts[iso] || []).map(a => (
+                <button key={a.id} onClick={() => openAppt(a)} className="w-full text-left text-[10px] leading-tight bg-blue-100 text-blue-700 rounded px-1 py-0.5 block whitespace-normal break-words">{a.time} {a.title}</button>
+              ))}
+              {(dayTasks[iso] || []).map(t => {
+                const pr = PRIORITIES.find(p => p.id === t.priority);
+                const repeating = t.repeatUnit && t.repeatUnit !== 'aucune';
+                return (
+                  <button key={t.id} onClick={() => openTask(t)} style={{ background: pr.bg, color: pr.color }} className="w-full text-left text-[10px] leading-tight rounded px-1 py-0.5 flex items-start gap-0.5 whitespace-normal break-words">
+                    {repeating && <Repeat size={9} className="shrink-0 mt-0.5" />}<span>{t.time ? `${t.time} ` : ''}{t.title}</span>
+                  </button>
+                );
+              })}
+            </>
+          )}
         />
       </div>
 
@@ -2203,90 +2206,103 @@ function PlanningView({ members, tasks, appointments, externalContacts, perm, cu
 /*  Durée des projets (ex-Gantt)                                          */
 /* ---------------------------------------------------------------------- */
 
-function GanttView({ tasks, projects, members, openTask }) {
-  const [filterProject, setFilterProject] = useState('all');
-  const DAY_W = 30;
-  const withRange = tasks.filter(t => t.deadline).filter(t => filterProject === 'all' || t.projectId === filterProject)
-    .map(t => { let start = t.startDate || t.deadline; if (dayDiff(start, t.deadline) < 0) start = t.deadline; return { ...t, start }; });
-  const projectsWithSpan = projects.filter(p => (filterProject === 'all' || p.id === filterProject) && p.startDate && p.endDate);
+// Même format calendrier que Planning, mais avec les projets (durée
+// globale) plutôt que les tâches — et une liste dépliable en dessous, même
+// principe que "Projets par personne" dans la Vue d'ensemble, pour voir les
+// tâches de chaque projet sans quitter la page.
+function GanttView({ tasks, projects, members, openTask, onOpenProject }) {
+  const [cursor, setCursor] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
+  const [filterService, setFilterService] = useState('all');
+  const [filterTeam, setFilterTeam] = useState('all');
+  const [expanded, setExpanded] = useState(new Set());
+  const toggleExpanded = (id) => setExpanded(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
 
-  if (withRange.length === 0 && projectsWithSpan.length === 0) return <EmptyState icon={GanttChartSquare} title="Aucune tâche planifiable" subtitle="Renseignez une échéance sur vos tâches, ou une durée de projet, pour les voir apparaître ici." />;
+  const rolesOf = (ids) => (ids || []).map(id => members.find(m => m.id === id)?.role).filter(Boolean);
+  const matchesTeam = (p) => {
+    if (filterTeam === 'all') return true;
+    const roles = rolesOf(p.teamIds);
+    if (filterTeam === 'manip') return roles.some(r => r === 'Manipulateur' || r === 'Aide manipulateur');
+    if (filterTeam === 'secretaire') return roles.some(r => r === 'Secrétaire');
+    return true;
+  };
+  const filteredProjects = projects.filter(p => p.startDate && p.endDate &&
+    (filterService === 'all' || p.service === filterService) && matchesTeam(p));
 
-  const allStarts = [...withRange.map(t => t.start), ...projectsWithSpan.map(p => p.startDate)];
-  const allEnds = [...withRange.map(t => t.deadline), ...projectsWithSpan.map(p => p.endDate)];
-  const rangeStart = addDays(allStarts.reduce((min, d) => d < min ? d : min, allStarts[0]), -1);
-  const rangeEnd = addDays(allEnds.reduce((max, d) => d > max ? d : max, allEnds[0]), 2);
-  const totalDays = dayDiff(rangeStart, rangeEnd) + 1;
-  const days = Array.from({ length: totalDays }, (_, i) => addDays(rangeStart, i));
-  const trackWidth = totalDays * DAY_W;
-  const months = [];
-  days.forEach(d => {
-    const label = new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' });
-    const last = months[months.length - 1];
-    if (last && last.label === label) last.span += 1; else months.push({ label, span: 1 });
+  const dayProjects = {};
+  filteredProjects.forEach(p => {
+    for (let d = p.startDate; d <= p.endDate; d = addDays(d, 1)) (dayProjects[d] = dayProjects[d] || []).push(p);
   });
-  const grouped = projects.map(p => ({ project: p, items: withRange.filter(t => t.projectId === p.id) }))
-    .filter(g => g.items.length > 0 || (g.project.startDate && g.project.endDate));
-  const noProject = withRange.filter(t => !projects.some(p => p.id === t.projectId));
-  if (noProject.length) grouped.push({ project: { id: '_none', name: 'Sans projet', color: '#94A3B8' }, items: noProject });
-  const todayOffset = dayDiff(rangeStart, todayISO());
+  const sortedProjects = [...filteredProjects].sort((a, b) => a.startDate.localeCompare(b.startDate));
 
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-4">
-        <select className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 bg-white focus:outline-none" value={filterProject} onChange={e => setFilterProject(e.target.value)}>
-          <option value="all">Tous les projets</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        <select className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 bg-white focus:outline-none" value={filterService} onChange={e => setFilterService(e.target.value)}>
+          <option value="all">Tous les services</option>{PROJECT_SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        <span className="text-xs text-slate-400">Bandeau teinté sous le nom du projet = sa durée globale</span>
+        <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+          {[{ id: 'all', label: 'Tout métier' }, { id: 'manip', label: 'Manipulateurs' }, { id: 'secretaire', label: 'Secrétaires' }].map(o => (
+            <button key={o.id} type="button" onClick={() => setFilterTeam(o.id)}
+              className={`px-3 py-1.5 ${filterTeam === o.id ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+              {o.label}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
-        <div style={{ minWidth: 200 + trackWidth }}>
-          <div className="flex sticky top-0 bg-white z-20">
-            <div className="w-[200px] shrink-0 border-r border-b border-slate-100" />
-            <div className="flex border-b border-slate-100">{months.map((mo, i) => <div key={i} style={{ width: mo.span * DAY_W }} className="text-xs font-medium text-slate-500 px-2 py-1.5 border-r border-slate-50 capitalize">{mo.label}</div>)}</div>
-          </div>
-          <div className="flex">
-            <div className="w-[200px] shrink-0 border-r border-slate-100" />
-            <div className="flex">{days.map((d, i) => { const dow = new Date(d + 'T00:00:00').getDay(); const weekend = dow === 0 || dow === 6; return <div key={i} style={{ width: DAY_W }} className={`text-[10px] text-center py-1 border-r border-slate-50 ${weekend ? 'bg-slate-50 text-slate-300' : 'text-slate-400'}`}>{new Date(d + 'T00:00:00').getDate()}</div>; })}</div>
-          </div>
-          {grouped.map(g => (
-            <div key={g.project.id}>
-              <div className="flex bg-slate-50/60">
-                <div className="w-[200px] shrink-0 px-3 py-1.5 text-xs font-semibold text-slate-500 flex items-center gap-1.5 border-r border-slate-100"><span style={{ background: g.project.color }} className="w-2 h-2 rounded-full" />{g.project.name}</div>
-                <div style={{ width: trackWidth }} className="relative h-6 border-b border-slate-50">
-                  {g.project.startDate && g.project.endDate && (
-                    <div style={{
-                      left: dayDiff(rangeStart, g.project.startDate) * DAY_W,
-                      width: (dayDiff(g.project.startDate, g.project.endDate) + 1) * DAY_W,
-                      background: g.project.color,
-                    }} className="absolute top-1.5 h-3 rounded opacity-25" title={`Durée du projet : ${fmtDate(g.project.startDate)} → ${fmtDate(g.project.endDate)}`} />
-                  )}
-                </div>
-              </div>
-              {g.items.map(t => {
-                const responsibles = responsibleIdsOf(t).map(id => members.find(m => m.id === id)).filter(Boolean);
-                const offset = dayDiff(rangeStart, t.start);
-                const span = Math.max(1, dayDiff(t.start, t.deadline) + 1);
-                const pr = PRIORITIES.find(p => p.id === t.priority);
+      {filteredProjects.length === 0 ? (
+        <EmptyState icon={GanttChartSquare} title="Aucun projet planifiable" subtitle="Renseignez une durée de projet (début et fin), ou ajustez les filtres." />
+      ) : (
+        <>
+          <MonthCalendar
+            year={cursor.year} month={cursor.month}
+            onPrev={() => setCursor(c => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 })}
+            onNext={() => setCursor(c => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 })}
+            renderDay={(iso) => (dayProjects[iso] || []).map(p => {
+              const color = (p.service && SERVICE_COLORS[p.service]) || p.color || '#64748B';
+              return (
+                <button key={p.id} onClick={() => onOpenProject(p)} style={{ background: `${color}22`, color }}
+                  className="w-full text-left text-[10px] leading-tight rounded px-1 py-0.5 block truncate font-medium">
+                  {p.name}
+                </button>
+              );
+            })}
+          />
+          <div className="bg-white rounded-2xl border border-slate-100 p-4">
+            <h3 className="text-sm font-semibold text-slate-700 mb-2" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Projets ({sortedProjects.length})</h3>
+            <div className="divide-y divide-slate-50">
+              {sortedProjects.map(p => {
+                const isOpen = expanded.has(p.id);
+                const color = (p.service && SERVICE_COLORS[p.service]) || p.color || '#64748B';
+                const projectTasks = tasks.filter(t => t.projectId === p.id).sort((a, b) => (a.deadline || '9999').localeCompare(b.deadline || '9999'));
                 return (
-                  <div key={t.id} className="flex items-center border-b border-slate-50">
-                    <div className="w-[200px] shrink-0 px-3 py-2 flex items-center gap-2 border-r border-slate-100">
-                      {t.isGovernance ? <GovIcon id={t.governanceType} size={14} className="text-purple-500 shrink-0" /> : responsibles[0] && <Avatar name={responsibles[0].name} size={20} />}
-                      <span className="text-xs text-slate-600 truncate">{t.title}</span>
-                    </div>
-                    <div style={{ width: trackWidth }} className="relative h-9">
-                      {todayOffset >= 0 && todayOffset < totalDays && <div style={{ left: todayOffset * DAY_W + DAY_W / 2 }} className="absolute top-0 bottom-0 w-px bg-red-300 z-10" />}
-                      <button onClick={() => openTask(t)} style={{ left: offset * DAY_W + 2, width: span * DAY_W - 4, background: t.isGovernance ? '#7C3AED' : pr.bar }}
-                        className="absolute top-1.5 h-6 rounded-md text-white text-[10px] font-medium flex items-center px-2 truncate hover:brightness-95"
-                        title={`${t.title} · ${fmtDate(t.start)} → ${fmtDate(t.deadline)}`}>{t.title}</button>
-                    </div>
+                  <div key={p.id}>
+                    <button onClick={() => toggleExpanded(p.id)}
+                      className="w-full flex items-center gap-2.5 py-2.5 text-left cursor-pointer hover:bg-slate-50 rounded-lg px-1.5 -mx-1.5">
+                      <span style={{ background: color }} className="w-2 h-2 rounded-full shrink-0" />
+                      <span className="text-xs font-medium text-slate-600 flex-1 truncate">{p.name}</span>
+                      <span className="text-[11px] text-slate-400 shrink-0">{fmtDate(p.startDate)} → {fmtDate(p.endDate)}</span>
+                      <ChevronDown size={14} className={`text-slate-400 transition-transform shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    {isOpen && (
+                      <div className="pl-6 pb-2.5 space-y-1">
+                        {projectTasks.length === 0 ? (
+                          <div className="text-xs text-slate-300 py-1">Aucune tâche sur ce projet</div>
+                        ) : projectTasks.map(t => (
+                          <button key={t.id} onClick={() => openTask(t)} className="w-full flex items-center gap-2 text-left px-2 py-1.5 rounded-lg hover:bg-slate-50">
+                            {t.isGovernance && <GovIcon id={t.governanceType} size={12} className="text-purple-500 shrink-0" />}
+                            <span className="text-xs text-slate-600 truncate flex-1">{t.title}</span>
+                            <DeadlineBadge deadline={t.deadline} status={t.status} />
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
-          ))}
-        </div>
-      </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -3621,7 +3637,7 @@ function ReferentApp({ session, onSignOut }) {
           {view === 'tasks' && <TasksView tasks={scopedTasks} members={members} projects={scopedProjects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={(projectId) => setTaskModal({ task: null, presetProjectId: projectId })} newProject={() => setProjectModal({ project: null })} editProject={(p) => setProjectModal({ project: p })} />}
           {view === 'planning' && <PlanningView members={members} tasks={scopedTasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
           {view === 'transmissions' && <TransmissionsView transmissions={transmissions} members={members} currentMemberId={connectedAs} onPost={postTransmission} />}
-          {view === 'gantt' && <GanttView tasks={scopedTasks} members={members} projects={scopedProjects} openTask={(t) => setTaskModal({ task: t })} />}
+          {view === 'gantt' && <GanttView tasks={scopedTasks} members={members} projects={scopedProjects} openTask={(t) => setTaskModal({ task: t })} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'priorisation' && <PrioritisationView projects={scopedProjects} members={members} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} onImport={importMembers} />}
           {view === 'contacts' && <ContactsView contacts={externalContacts} perm={perm} editContact={(c) => setContactModal({ contact: c })} newContact={() => setContactModal({ contact: null })} />}

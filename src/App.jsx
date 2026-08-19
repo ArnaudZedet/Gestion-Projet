@@ -885,18 +885,22 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
         </Field>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Durée">
-          <select disabled={locked} className={inputCls} value={form.scope} onChange={e => setForm({ ...form, scope: e.target.value })}>
-            {SCOPES.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
-          </select>
-        </Field>
-        <Field label="Statut">
-          <select disabled={locked} className={inputCls} value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
-            {STATUSES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </select>
-        </Field>
-      </div>
+      <Field label="Durée">
+        <select disabled={locked} className={inputCls} value={form.scope} onChange={e => setForm({ ...form, scope: e.target.value })}>
+          {SCOPES.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
+        </select>
+      </Field>
+      <Field label="Statut">
+        <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+          {STATUSES.map(s => (
+            <button key={s.id} type="button" disabled={locked} onClick={() => setForm({ ...form, status: s.id })}
+              className="flex-1 py-2 disabled:opacity-60"
+              style={form.status === s.id ? { background: s.color, color: '#fff' } : { background: '#fff', color: '#64748B' }}>
+              {s.label}
+            </button>
+          ))}
+        </div>
+      </Field>
       <div className="grid grid-cols-3 gap-3">
         <Field label="Date de début (pour Durée des projets)">
           <input disabled={locked} type="date" min={currentProject?.startDate || todayISO()} max={currentProject?.endDate || undefined} className={inputCls} value={form.startDate || ''} onChange={e => setForm({ ...form, startDate: e.target.value })} />

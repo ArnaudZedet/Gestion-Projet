@@ -1558,13 +1558,11 @@ function Dashboard({ tasks, members, projects, appointments, connectedAs, openTa
   const openPool = tasks.filter(t => t.assignMode === 'pool' && !t.assigneeId && t.pool && t.pool.length > 0);
   const lateProjects = projects.filter(isProjectLate);
 
-  const workload = members.map(m => {
-    const mine = active.filter(t => responsibleIdsOf(t).includes(m.id));
-    const counts = {};
-    PRIORITIES.forEach(p => counts[p.id] = mine.filter(t => t.priority === p.id).length);
-    return { member: m, total: mine.length, counts };
-  }).sort((a, b) => b.total - a.total);
-  const maxTotal = Math.max(1, ...workload.map(w => w.total));
+  const activeProjects = projects.filter(p => p.status !== 'termine');
+  const projectsByMember = members.map(m => {
+    const mine = activeProjects.filter(p => (p.responsibleIds || []).includes(m.id) || (p.teamIds || []).includes(m.id));
+    return { member: m, projects: mine };
+  }).sort((a, b) => b.projects.length - a.projects.length);
 
   const urgentList = [...overdue, ...dueSoon.filter(t => !overdue.includes(t))]
     .sort((a, b) => (a.deadline || '').localeCompare(b.deadline || '')).slice(0, 6);
@@ -1608,22 +1606,35 @@ function Dashboard({ tasks, members, projects, appointments, connectedAs, openTa
               </div>
             </div>
           )}
-          <h3 className="text-sm font-semibold text-slate-700 mb-4" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Charge de travail par personne</h3>
-          <div className="space-y-3">
-            {workload.map(w => (
+          <h3 className="text-sm font-semibold text-slate-700 mb-4" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Projets par personne</h3>
+          <div className="space-y-4">
+            {projectsByMember.map(w => (
               <div key={w.member.id}>
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2"><Avatar name={w.member.name} size={22} /><span className="text-xs font-medium text-slate-600">{w.member.name}</span></div>
-                  <span className="text-xs text-slate-400">{w.total} tâche{w.total !== 1 ? 's' : ''}</span>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Avatar name={w.member.name} size={22} />
+                  <span className="text-xs font-medium text-slate-600">{w.member.name}</span>
+                  <span className="text-xs text-slate-400">{w.projects.length} projet{w.projects.length !== 1 ? 's' : ''}</span>
                 </div>
-                <div className="h-2 rounded-full bg-slate-100 overflow-hidden flex">
-                  {PRIORITIES.map(p => { const c = w.counts[p.id]; if (!c) return null; return <div key={p.id} style={{ width: `${(c / maxTotal) * 100}%`, background: p.bar }} title={`${p.label}: ${c}`} />; })}
-                </div>
+                {w.projects.length === 0 ? (
+                  <div className="pl-7 text-xs text-slate-300">Aucun projet actif</div>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5 pl-7">
+                    {w.projects.map(p => {
+                      const color = (p.service && SERVICE_COLORS[p.service]) || p.color || '#64748B';
+                      const amResponsible = (p.responsibleIds || []).includes(w.member.id);
+                      return (
+                        <button key={p.id} onClick={() => onOpenProject && onOpenProject(p)}
+                          className="text-xs px-2.5 py-1 rounded-full border flex items-center gap-1.5 font-medium"
+                          style={{ borderColor: `${color}55`, background: `${color}14`, color }}>
+                          <span style={{ background: color }} className="w-1.5 h-1.5 rounded-full shrink-0" />
+                          {p.name}{amResponsible ? ' · Responsable' : ''}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             ))}
-          </div>
-          <div className="flex gap-3 mt-4 pt-4 border-t border-slate-100">
-            {PRIORITIES.map(p => <div key={p.id} className="flex items-center gap-1.5 text-xs text-slate-400"><span style={{ background: p.bar }} className="w-2 h-2 rounded-full" /> {p.label}</div>)}
           </div>
         </div>
         <div className="lg:col-span-2 space-y-4">

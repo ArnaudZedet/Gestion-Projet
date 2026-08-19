@@ -2367,11 +2367,18 @@ function TransmissionsView({ transmissions, members, currentMemberId, onPost }) 
         {channels.map(c => {
           const active = selected.service === c.service && selected.functionGroup === c.functionGroup;
           const color = SERVICE_COLORS[c.service] || '#64748B';
+          const count = transmissions.filter(t => t.service === c.service && t.functionGroup === c.functionGroup).length;
           return (
             <button key={`${c.functionGroup}-${c.service}`} onClick={() => setSelected(c)}
-              className="w-full text-left px-3 py-2 rounded-lg text-sm border font-medium"
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm border font-medium"
               style={active ? { background: color, borderColor: color, color: '#fff' } : { background: `${color}14`, borderColor: `${color}55`, color }}>
-              {c.label}
+              <span className="flex-1 text-left">{c.label}</span>
+              {count > 0 && (
+                <span className="text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 shrink-0"
+                  style={active ? { background: 'rgba(255,255,255,0.25)', color: '#fff' } : { background: `${color}22`, color }}>
+                  {count > 99 ? '99+' : count}
+                </span>
+              )}
             </button>
           );
         })}
@@ -2833,6 +2840,7 @@ function ReferentApp({ session, onSignOut }) {
   const [requestModal, setRequestModal] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const [hoveredNav, setHoveredNav] = useState('');
+  const [transmissionsLastSeen, setTransmissionsLastSeen] = useState('');
   const [toasts, setToasts] = useState([]);
 
   useEffect(() => {
@@ -2904,14 +2912,26 @@ function ReferentApp({ session, onSignOut }) {
       if (matched) {
         setConnectedAs(matched.id);
         setView(matched.accessLevel === 'manager' ? 'dashboard' : 'tasks');
+        setTransmissionsLastSeen(localStorage.getItem(`transmissions_last_seen_${matched.id}`) || '');
       } else { setNotRecognized(true); }
       setLoading(false);
     })();
   }, []);
 
+  // Petit badge sur l'onglet Transmissions : nombre de messages postés par
+  // d'autres depuis la dernière visite de cet onglet (mémorisé localement).
+  useEffect(() => {
+    if (view === 'transmissions' && connectedAs) {
+      const now = new Date().toISOString();
+      localStorage.setItem(`transmissions_last_seen_${connectedAs}`, now);
+      setTransmissionsLastSeen(now);
+    }
+  }, [view, connectedAs]);
+  const unreadTransmissions = transmissions.filter(t => t.authorId !== connectedAs && (!transmissionsLastSeen || t.createdAt > transmissionsLastSeen)).length;
+
   const currentMember = members.find(m => m.id === connectedAs);
   const perm = permissionsFor(currentMember?.accessLevel || 'utilisateur');
-  const nav = navFor(perm);
+  const nav = navFor(perm).map(n => n.id === 'transmissions' ? { ...n, badge: unreadTransmissions } : n);
 
   // Portée équipe : un non-manager ne voit que les projets dont il est membre déclaré,
   // et — pour les tâches sans projet — celles qui lui sont personnellement assignées.
@@ -3532,6 +3552,11 @@ function ReferentApp({ session, onSignOut }) {
                 }}
                 className={`w-full flex items-center gap-2.5 pl-3 pr-3 py-2.5 rounded-xl text-sm font-medium transition-all ${active ? 'text-white' : 'text-white/70 hover:text-white'}`}>
                 <n.Icon size={16} style={{ color: active ? '#FFFFFF' : n.accent }} /> {n.label}
+                {!!n.badge && (
+                  <span className="ml-auto bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 shrink-0">
+                    {n.badge > 99 ? '99+' : n.badge}
+                  </span>
+                )}
               </button>
             );
           })}

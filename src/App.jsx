@@ -21,7 +21,7 @@ const PRIORITIES = [
 ];
 
 const STATUSES = [
-  { id: 'a_faire',  label: 'À faire',  color: '#475467', bg: '#F1F2F4' },
+  { id: 'a_faire',  label: 'Programmé', color: '#475467', bg: '#F1F2F4' },
   { id: 'en_cours', label: 'En cours', color: '#1849A9', bg: '#DBE7FE' },
   { id: 'termine',  label: 'Terminé',  color: '#127A45', bg: '#D8F4E4' },
 ];
@@ -293,8 +293,8 @@ const ROW_MAPPERS = {
   },
   projects: {
     table: 'projects',
-    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, service: p.service || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', priority: p.priority || 'normale', importance: p.importance || 'moyenne', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null, start_reminder_sent: !!p.startReminderSent, responsible_ids: p.responsibleIds || [], rotate_responsible: !!p.rotateResponsible, responsible_rotation_pool: p.responsibleRotationPool || [], pending_approval: !!p.pendingApproval, created_by: p.createdBy || null }),
-    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', service: r.service || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', priority: r.priority || 'normale', importance: r.importance || 'moyenne', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null, startReminderSent: !!r.start_reminder_sent, responsibleIds: (r.responsible_ids && r.responsible_ids.length ? r.responsible_ids : (r.responsible_id ? [r.responsible_id] : [])), rotateResponsible: !!r.rotate_responsible, responsibleRotationPool: r.responsible_rotation_pool || [], pendingApproval: !!r.pending_approval, createdBy: r.created_by || '' }),
+    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, service: p.service || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', priority: p.priority || 'normale', importance: p.importance || 'moyenne', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null, start_reminder_sent: !!p.startReminderSent, end_reminder_sent: !!p.endReminderSent, responsible_ids: p.responsibleIds || [], rotate_responsible: !!p.rotateResponsible, responsible_rotation_pool: p.responsibleRotationPool || [], pending_approval: !!p.pendingApproval, created_by: p.createdBy || null }),
+    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', service: r.service || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', priority: r.priority || 'normale', importance: r.importance || 'moyenne', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null, startReminderSent: !!r.start_reminder_sent, endReminderSent: !!r.end_reminder_sent, responsibleIds: (r.responsible_ids && r.responsible_ids.length ? r.responsible_ids : (r.responsible_id ? [r.responsible_id] : [])), rotateResponsible: !!r.rotate_responsible, responsibleRotationPool: r.responsible_rotation_pool || [], pendingApproval: !!r.pending_approval, createdBy: r.created_by || '' }),
   },
   tasks: {
     table: 'tasks',
@@ -886,21 +886,7 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Priorité (urgence)">
-          <select disabled={locked || !perm.isManager} className={inputCls} value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })}>
-            {PRIORITIES.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
-          {!perm.isManager && <div className="text-[11px] text-slate-400 mt-1">Réservé aux administrateurs</div>}
-        </Field>
-        <Field label="Importance (impact)">
-          <select disabled={locked || !perm.isManager} className={inputCls} value={form.importance} onChange={e => setForm({ ...form, importance: e.target.value })}>
-            {IMPORTANCE.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
-          </select>
-          {!perm.isManager && <div className="text-[11px] text-slate-400 mt-1">Réservé aux administrateurs</div>}
-        </Field>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Envergure">
+        <Field label="Durée">
           <select disabled={locked} className={inputCls} value={form.scope} onChange={e => setForm({ ...form, scope: e.target.value })}>
             {SCOPES.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
           </select>
@@ -1805,9 +1791,8 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
 
   const Row = ({ t }) => {
     const responsibles = responsibleIdsOf(t).map(id => members.find(m2 => m2.id === id)).filter(Boolean);
-    const pr = PRIORITIES.find(p => p.id === t.priority);
     return (
-      <tr onClick={() => openTask(t)} style={{ borderLeft: `3px solid ${pr.bar}` }} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 cursor-pointer">
+      <tr onClick={() => openTask(t)} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 cursor-pointer">
         <td className="px-4 py-2.5">
           <div className="font-medium text-slate-700 flex items-center gap-1.5">
             {t.isGovernance && <GovIcon id={t.governanceType} size={12} className="text-purple-500 shrink-0" />}
@@ -1822,7 +1807,6 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
           : <span className="text-xs text-slate-400">—</span>}
         </td>
         <td className="px-4 py-2.5"><ScopeTag id={t.scope} /></td>
-        <td className="px-4 py-2.5"><PriorityTag id={t.priority} /></td>
         <td className="px-4 py-2.5"><StatusTag id={t.status} /></td>
         <td className="px-4 py-2.5"><DeadlineBadge deadline={t.deadline} status={t.status} /></td>
       </tr>
@@ -1877,7 +1861,7 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
         <table className="w-full text-sm">
           <thead><tr className="border-b border-slate-100 text-left text-xs text-slate-400">
             <th className="px-4 py-2.5 font-medium">Tâche</th><th className="px-4 py-2.5 font-medium">Assignée à</th>
-            <th className="px-4 py-2.5 font-medium">Envergure</th><th className="px-4 py-2.5 font-medium">Priorité</th>
+            <th className="px-4 py-2.5 font-medium">Durée</th>
             <th className="px-4 py-2.5 font-medium">Statut</th><th className="px-4 py-2.5 font-medium">Échéance</th>
           </tr></thead>
           <tbody>{g.items.map(t => <Row key={t.id} t={t} />)}</tbody>
@@ -2156,7 +2140,6 @@ function PlanningView({ members, tasks, appointments, externalContacts, perm, cu
                 <button key={t.id} onClick={() => openTask(t)} className="w-full text-left px-2 py-2 hover:bg-amber-50/40 flex items-center gap-2.5 rounded-lg">
                   <Users size={14} className="text-amber-500 shrink-0" />
                   <span className="text-sm text-slate-700 flex-1 truncate">{t.title}</span>
-                  <PriorityTag id={t.priority} />
                 </button>
               ))}
             </div>
@@ -2172,10 +2155,9 @@ function PlanningView({ members, tasks, appointments, externalContacts, perm, cu
                 <button key={a.id} onClick={() => openAppt(a)} className="w-full text-left text-[10px] leading-tight bg-blue-100 text-blue-700 rounded px-1 py-0.5 block whitespace-normal break-words">{a.time} {a.title}</button>
               ))}
               {(dayTasks[iso] || []).map(t => {
-                const pr = PRIORITIES.find(p => p.id === t.priority);
                 const repeating = t.repeatUnit && t.repeatUnit !== 'aucune';
                 return (
-                  <button key={t.id} onClick={() => openTask(t)} style={{ background: pr.bg, color: pr.color }} className="w-full text-left text-[10px] leading-tight rounded px-1 py-0.5 flex items-start gap-0.5 whitespace-normal break-words">
+                  <button key={t.id} onClick={() => openTask(t)} className="w-full text-left text-[10px] leading-tight bg-slate-100 text-slate-600 rounded px-1 py-0.5 flex items-start gap-0.5 whitespace-normal break-words">
                     {repeating && <Repeat size={9} className="shrink-0 mt-0.5" />}<span>{t.time ? `${t.time} ` : ''}{t.title}</span>
                   </button>
                 );
@@ -2354,7 +2336,10 @@ function GanttView({ tasks, projects, members, openTask, onOpenProject }) {
             onOpenItem={onOpenProject}
             getRange={(p) => ({ start: p.startDate, end: p.endDate })}
             getColor={(p) => (p.service && SERVICE_COLORS[p.service]) || p.color || '#64748B'}
-            getLabel={(p) => p.name}
+            getLabel={(p) => {
+              const r = members.find(m => (p.responsibleIds || []).includes(m.id));
+              return r ? `${p.name} · ${r.name.split(' ')[0]}` : p.name;
+            }}
           />
           <div className="bg-white rounded-2xl border border-slate-100 p-4">
             <h3 className="text-sm font-semibold text-slate-700 mb-2" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Projets ({sortedProjects.length})</h3>
@@ -2369,6 +2354,10 @@ function GanttView({ tasks, projects, members, openTask, onOpenProject }) {
                       className="w-full flex items-center gap-2.5 py-2.5 text-left cursor-pointer hover:bg-slate-50 rounded-lg px-1.5 -mx-1.5">
                       <span style={{ background: color }} className="w-2 h-2 rounded-full shrink-0" />
                       <span className="text-xs font-medium text-slate-600 flex-1 truncate">{p.name}</span>
+                      {(() => {
+                        const r = members.find(m => (p.responsibleIds || []).includes(m.id));
+                        return r ? <span className="text-[11px] text-slate-400 shrink-0 flex items-center gap-1"><Avatar name={r.name} size={16} />{r.name.split(' ')[0]}</span> : null;
+                      })()}
                       <span className="text-[11px] text-slate-400 shrink-0">{fmtDate(p.startDate)} → {fmtDate(p.endDate)}</span>
                       <ChevronDown size={14} className={`text-slate-400 transition-transform shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
                     </button>
@@ -2399,8 +2388,11 @@ function GanttView({ tasks, projects, members, openTask, onOpenProject }) {
             onNext={() => setCursor(c => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 })}
             onOpenItem={openTask}
             getRange={(t) => ({ start: t._start, end: t.deadline })}
-            getColor={(t) => (PRIORITIES.find(p => p.id === t.priority) || PRIORITIES[2]).bar}
-            getLabel={(t) => t.title}
+            getColor={(t) => { const proj = projects.find(p => p.id === t.projectId); return (proj?.service && SERVICE_COLORS[proj.service]) || proj?.color || '#64748B'; }}
+            getLabel={(t) => {
+              const r = responsibleIdsOf(t).map(id => members.find(m => m.id === id)).filter(Boolean)[0];
+              return r ? `${t.title} · ${r.name.split(' ')[0]}` : t.title;
+            }}
           />
           <div className="bg-white rounded-2xl border border-slate-100 p-4">
             <h3 className="text-sm font-semibold text-slate-700 mb-2" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Tâches ({sortedTasks.length})</h3>
@@ -3075,6 +3067,18 @@ function ReferentApp({ session, onSignOut }) {
   }, [view, connectedAs]);
   const unreadTransmissions = transmissions.filter(t => t.authorId !== connectedAs && (!transmissionsLastSeen || t.createdAt > transmissionsLastSeen)).length;
 
+  // Une tâche "Programmée" passe seule à "En cours" dès que sa date de
+  // début est atteinte — pas besoin d'y repenser pour la démarrer.
+  useEffect(() => {
+    if (loading) return;
+    const today = todayISO();
+    const due = tasks.filter(t => t.status === 'a_faire' && t.startDate && t.startDate <= today);
+    if (due.length === 0) return;
+    const updated = due.map(t => ({ ...t, status: 'en_cours' }));
+    setTasks(prev => prev.map(t => updated.find(u => u.id === t.id) || t));
+    upsertRows('tasks', updated);
+  }, [loading, tasks]);
+
   const currentMember = members.find(m => m.id === connectedAs);
   const perm = permissionsFor(currentMember?.accessLevel || 'utilisateur');
   const nav = navFor(perm).map(n => n.id === 'transmissions' ? { ...n, badge: unreadTransmissions } : n);
@@ -3418,10 +3422,17 @@ function ReferentApp({ session, onSignOut }) {
     // qu'elle puisse se redéclencher si le projet redevient en retard plus tard.
     const datesOrStatusChanged = exists && (prevProject.endDate !== projectObjInput.endDate || prevProject.status !== projectObjInput.status);
     // Pareil pour le rappel de démarrage (veille du jour ouvré) si la date
-    // de début change, pour qu'il reparte du bon jour.
+    // de début change, et pour le rappel de fin (jour même) si la date de
+    // fin change, pour qu'ils repartent du bon jour.
     const startDateChanged = exists && prevProject.startDate !== projectObjInput.startDate;
-    const projectObj = (datesOrStatusChanged || startDateChanged)
-      ? { ...projectObjInput, lateNotifiedAt: datesOrStatusChanged ? null : projectObjInput.lateNotifiedAt, startReminderSent: startDateChanged ? false : projectObjInput.startReminderSent }
+    const endDateChanged = exists && prevProject.endDate !== projectObjInput.endDate;
+    const projectObj = (datesOrStatusChanged || startDateChanged || endDateChanged)
+      ? {
+          ...projectObjInput,
+          lateNotifiedAt: datesOrStatusChanged ? null : projectObjInput.lateNotifiedAt,
+          startReminderSent: startDateChanged ? false : projectObjInput.startReminderSent,
+          endReminderSent: endDateChanged ? false : projectObjInput.endReminderSent,
+        }
       : projectObjInput;
     setProjects(prev => exists ? prev.map(p => p.id === projectObj.id ? projectObj : p) : [...prev, projectObj]);
     warnIfFailed(await upsertRow('projects', projectObj), 'Le projet');
@@ -3506,7 +3517,7 @@ function ReferentApp({ session, onSignOut }) {
         newResponsibleIds = [rotated.assigneeId];
         newResponsibleRotationPool = rotated.rotationPool;
       }
-      const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd, lateNotifiedAt: null, startReminderSent: false, responsibleIds: newResponsibleIds, responsibleRotationPool: newResponsibleRotationPool };
+      const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd, lateNotifiedAt: null, startReminderSent: false, endReminderSent: false, responsibleIds: newResponsibleIds, responsibleRotationPool: newResponsibleRotationPool };
       renewedProject = newProject;
       setProjects(prev => [...prev, newProject]);
       warnIfFailed(await upsertRow('projects', newProject), 'Le renouvellement du projet');
@@ -3568,7 +3579,7 @@ function ReferentApp({ session, onSignOut }) {
   };
   const duplicateProject = async (original) => {
     const id = uid();
-    const clone = { ...original, id, name: `${original.name} (copie)`, status: 'en_cours', pendingApproval: false, createdBy: connectedAs, lateNotifiedAt: null, startReminderSent: false };
+    const clone = { ...original, id, name: `${original.name} (copie)`, status: 'en_cours', pendingApproval: false, createdBy: connectedAs, lateNotifiedAt: null, startReminderSent: false, endReminderSent: false };
     setProjects(prev => [...prev, clone]);
     warnIfFailed(await upsertRow('projects', clone), 'La copie du projet');
     const oldTasks = tasks.filter(t => t.projectId === original.id);

@@ -2217,12 +2217,13 @@ function PlanningView({ members, tasks, appointments, externalContacts, perm, cu
 /*  Durée des projets (ex-Gantt)                                          */
 /* ---------------------------------------------------------------------- */
 
-// Semaine par semaine, chaque projet est dessiné une seule fois en barre
-// continue sur ses jours d'activité (grille CSS, colonnes = jours de la
-// semaine), au lieu de répéter son nom dans chaque case comme un agenda
-// classique. Plusieurs projets actifs la même semaine s'empilent chacun
+// Semaine par semaine, chaque élément (projet ou tâche, selon getRange/
+// getColor/getLabel fournis par l'appelant) est dessiné une seule fois en
+// barre continue sur ses jours d'activité (grille CSS, colonnes = jours de
+// la semaine), au lieu de répéter son nom dans chaque case comme un agenda
+// classique. Plusieurs éléments actifs la même semaine s'empilent chacun
 // sur leur propre ligne (recherche de la première ligne libre).
-function ProjectMonthCalendar({ year, month, projects, onPrev, onNext, onOpenProject }) {
+function SpanMonthCalendar({ year, month, items, onPrev, onNext, onOpenItem, getRange, getColor, getLabel }) {
   const cells = monthMatrix(year, month);
   const monthLabel = new Date(year, month, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
   const weeks = [];
@@ -2244,12 +2245,13 @@ function ProjectMonthCalendar({ year, month, projects, onPrev, onNext, onOpenPro
           const weekDates = isoWeek.filter(Boolean);
           if (weekDates.length === 0) return null;
           const wMin = weekDates[0], wMax = weekDates[weekDates.length - 1];
-          const active = projects.filter(p => p.startDate <= wMax && p.endDate >= wMin)
-            .map(p => {
-              const startCol = isoWeek.findIndex(iso => iso && iso >= p.startDate);
+          const active = items.filter(it => { const r = getRange(it); return r.start <= wMax && r.end >= wMin; })
+            .map(it => {
+              const r = getRange(it);
+              const startCol = isoWeek.findIndex(iso => iso && iso >= r.start);
               let endCol = 6;
-              for (let i = 6; i >= 0; i--) { if (isoWeek[i] && isoWeek[i] <= p.endDate) { endCol = i; break; } }
-              return { p, startCol, endCol, lane: 0 };
+              for (let i = 6; i >= 0; i--) { if (isoWeek[i] && isoWeek[i] <= r.end) { endCol = i; break; } }
+              return { it, startCol, endCol, lane: 0 };
             })
             .sort((a, b) => a.startCol - b.startCol || a.endCol - b.endCol);
           const lanes = [];
@@ -2270,13 +2272,13 @@ function ProjectMonthCalendar({ year, month, projects, onPrev, onNext, onOpenPro
                   </div>
                 );
               })}
-              {active.map(({ p, startCol, endCol, lane }) => {
-                const color = (p.service && SERVICE_COLORS[p.service]) || p.color || '#64748B';
+              {active.map(({ it, startCol, endCol, lane }) => {
+                const color = getColor(it);
                 return (
-                  <button key={p.id} onClick={() => onOpenProject(p)}
+                  <button key={it.id} onClick={() => onOpenItem(it)}
                     style={{ gridColumn: `${startCol + 1} / ${endCol + 2}`, gridRow: lane + 2, background: `${color}22`, color }}
                     className="text-[10px] font-medium rounded px-1.5 h-[18px] flex items-center truncate hover:brightness-95">
-                    {p.name}
+                    {getLabel(it)}
                   </button>
                 );
               })}
@@ -2289,27 +2291,45 @@ function ProjectMonthCalendar({ year, month, projects, onPrev, onNext, onOpenPro
 }
 function GanttView({ tasks, projects, members, openTask, onOpenProject }) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
+  const [displayMode, setDisplayMode] = useState('project'); // 'project' | 'task'
   const [filterService, setFilterService] = useState('all');
   const [filterTeam, setFilterTeam] = useState('all');
   const [expanded, setExpanded] = useState(new Set());
   const toggleExpanded = (id) => setExpanded(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
 
   const rolesOf = (ids) => (ids || []).map(id => members.find(m => m.id === id)?.role).filter(Boolean);
-  const matchesTeam = (p) => {
+  const matchesTeamRoles = (roles) => {
     if (filterTeam === 'all') return true;
-    const roles = rolesOf(p.teamIds);
     if (filterTeam === 'manip') return roles.some(r => r === 'Manipulateur' || r === 'Aide manipulateur');
     if (filterTeam === 'secretaire') return roles.some(r => r === 'Secrétaire');
     return true;
   };
   const filteredProjects = projects.filter(p => p.startDate && p.endDate &&
-    (filterService === 'all' || p.service === filterService) && matchesTeam(p));
-
+    (filterService === 'all' || p.service === filterService) && matchesTeamRoles(rolesOf(p.teamIds)));
   const sortedProjects = [...filteredProjects].sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+  const filteredTasks = tasks.filter(t => {
+    if (!t.deadline) return false;
+    const proj = projects.find(p => p.id === t.projectId);
+    if (filterService !== 'all' && proj?.service !== filterService) return false;
+    const ids = [t.assigneeId, ...(t.pool || []), ...Object.keys(t.raci || {})].filter(Boolean);
+    return matchesTeamRoles(rolesOf(ids));
+  }).map(t => { let start = t.startDate || t.deadline; if (start > t.deadline) start = t.deadline; return { ...t, _start: start }; });
+  const sortedTasks = [...filteredTasks].sort((a, b) => a.deadline.localeCompare(b.deadline));
+
+  const empty = displayMode === 'project' ? filteredProjects.length === 0 : filteredTasks.length === 0;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+          {[{ id: 'project', label: 'Projets' }, { id: 'task', label: 'Tâches' }].map(o => (
+            <button key={o.id} type="button" onClick={() => setDisplayMode(o.id)}
+              className={`px-3 py-1.5 font-medium ${displayMode === o.id ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+              {o.label}
+            </button>
+          ))}
+        </div>
         <select className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 bg-white focus:outline-none" value={filterService} onChange={e => setFilterService(e.target.value)}>
           <option value="all">Tous les services</option>{PROJECT_SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
@@ -2322,15 +2342,19 @@ function GanttView({ tasks, projects, members, openTask, onOpenProject }) {
           ))}
         </div>
       </div>
-      {filteredProjects.length === 0 ? (
-        <EmptyState icon={GanttChartSquare} title="Aucun projet planifiable" subtitle="Renseignez une durée de projet (début et fin), ou ajustez les filtres." />
-      ) : (
+      {empty ? (
+        <EmptyState icon={GanttChartSquare} title={displayMode === 'project' ? 'Aucun projet planifiable' : 'Aucune tâche planifiable'}
+          subtitle={displayMode === 'project' ? 'Renseignez une durée de projet (début et fin), ou ajustez les filtres.' : 'Renseignez une échéance sur vos tâches, ou ajustez les filtres.'} />
+      ) : displayMode === 'project' ? (
         <>
-          <ProjectMonthCalendar
-            year={cursor.year} month={cursor.month} projects={filteredProjects}
+          <SpanMonthCalendar
+            year={cursor.year} month={cursor.month} items={filteredProjects}
             onPrev={() => setCursor(c => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 })}
             onNext={() => setCursor(c => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 })}
-            onOpenProject={onOpenProject}
+            onOpenItem={onOpenProject}
+            getRange={(p) => ({ start: p.startDate, end: p.endDate })}
+            getColor={(p) => (p.service && SERVICE_COLORS[p.service]) || p.color || '#64748B'}
+            getLabel={(p) => p.name}
           />
           <div className="bg-white rounded-2xl border border-slate-100 p-4">
             <h3 className="text-sm font-semibold text-slate-700 mb-2" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Projets ({sortedProjects.length})</h3>
@@ -2362,6 +2386,33 @@ function GanttView({ tasks, projects, members, openTask, onOpenProject }) {
                       </div>
                     )}
                   </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <SpanMonthCalendar
+            year={cursor.year} month={cursor.month} items={filteredTasks}
+            onPrev={() => setCursor(c => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 })}
+            onNext={() => setCursor(c => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 })}
+            onOpenItem={openTask}
+            getRange={(t) => ({ start: t._start, end: t.deadline })}
+            getColor={(t) => (PRIORITIES.find(p => p.id === t.priority) || PRIORITIES[2]).bar}
+            getLabel={(t) => t.title}
+          />
+          <div className="bg-white rounded-2xl border border-slate-100 p-4">
+            <h3 className="text-sm font-semibold text-slate-700 mb-2" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Tâches ({sortedTasks.length})</h3>
+            <div className="divide-y divide-slate-50">
+              {sortedTasks.map(t => {
+                const responsibles = responsibleIdsOf(t).map(id => members.find(m => m.id === id)).filter(Boolean);
+                return (
+                  <button key={t.id} onClick={() => openTask(t)} className="w-full flex items-center gap-2.5 py-2.5 text-left hover:bg-slate-50 rounded-lg px-1.5 -mx-1.5">
+                    {t.isGovernance ? <GovIcon id={t.governanceType} size={14} className="text-purple-500 shrink-0" /> : responsibles[0] && <Avatar name={responsibles[0].name} size={20} />}
+                    <span className="text-xs font-medium text-slate-600 flex-1 truncate">{t.title}</span>
+                    <DeadlineBadge deadline={t.deadline} status={t.status} />
+                  </button>
                 );
               })}
             </div>

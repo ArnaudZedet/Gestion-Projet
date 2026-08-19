@@ -2,21 +2,33 @@ import { supabaseAdmin } from './_supabaseAdmin.js';
 import { sendEmail } from './_resend.js';
 import { requireCron } from './_cron.js';
 
+// Le jour ouvré précédant une date donnée (weekend exclu) — pour le rappel
+// de démarrage de projet, qui doit tomber sur un jour où le digest part.
+function prevBusinessDay(dateStr) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 // Tourne une fois par jour à 13h heure de Paris (voir vercel.json — l'heure
 // UTC choisie tient compte du changement heure été/hiver à ±1h près).
-// Fait deux choses, regroupées dans le même cron pour rester dans la limite
+// Fait trois choses, regroupées dans le même cron pour rester dans la limite
 // de 2 tâches planifiées du plan Vercel Hobby :
 //
 // 1. Alerte manager sur les projets en retard (une seule fois par projet,
 //    tant que rien ne change — voir late_notified_at).
-// 2. Envoi groupé des notifications en attente (affectation à un projet,
-//    tâche assignée, rotation de responsable...) : un seul email par
-//    destinataire, listant tout ce qui s'est accumulé depuis le dernier
-//    envoi, au lieu d'un email à chaque événement.
+// 2. Rappel au(x) responsable(s) d'un projet qui démarre le prochain jour
+//    ouvré (une seule fois par cycle — voir start_reminder_sent), déposé
+//    dans la file d'attente pour partir dans le digest du jour même.
+// 3. Envoi groupé des notifications en attente (affectation à un projet,
+//    tâche assignée, rotation de responsable, rappel de démarrage...) : un
+//    seul email par destinataire, listant tout ce qui s'est accumulé
+//    depuis le dernier envoi, au lieu d'un email à chaque événement.
 export default async function handler(req, res) {
   if (!requireCron(req)) return res.status(401).json({ error: 'Non autorisé' });
 
-  const result = { lateProjects: 0, digestRecipients: 0, digestNotifications: 0 };
+  const result = { lateProjects: 0, startReminders: 0, digestRecipients: 0, digestNotifications: 0 };
 
   // --- 1. Projets en retard ---
   const today = new Date().toISOString().slice(0, 10);
@@ -47,7 +59,46 @@ export default async function handler(req, res) {
     result.lateProjects = lateProjects.length;
   }
 
-  // --- 2. Envoi groupé des notifications en attente ---
+  // --- 2. Rappel de démarrage (veille ouvrée) ---
+  const { data: startingProjects, error: startErr } = await supabaseAdmin
+    .from('projects')
+    .select('id, name, start_date, responsible_ids')
+    .eq('status', 'en_cours')
+    .eq('start_reminder_sent', false)
+    .not('start_date', 'is', null);
+  if (startErr) return res.status(500).json({ error: startErr.message });
+
+  const dueProjects = (startingProjects || []).filter((p) => prevBusinessDay(p.start_date) === today);
+  if (dueProjects.length > 0) {
+    const responsibleIds = [...new Set(dueProjects.flatMap((p) => p.responsible_ids || []))];
+    if (responsibleIds.length) {
+      const { data: resp, error: respErr } = await supabaseAdmin.from('members').select('id, name, email').in('id', responsibleIds);
+      if (respErr) return res.status(500).json({ error: respErr.message });
+      const membersById = Object.fromEntries((resp || []).map((m) => [m.id, m]));
+      const queueRows = [];
+      dueProjects.forEach((p) => {
+        (p.responsible_ids || []).forEach((rid) => {
+          const rm = membersById[rid];
+          if (rm?.email) {
+            queueRows.push({
+              id: crypto.randomUUID(),
+              recipient_email: rm.email,
+              subject: `Le projet « ${p.name} » démarre demain`,
+              html: `<p>Bonjour ${rm.name},</p><p>Le projet <strong>${p.name}</strong>, dont vous êtes responsable, démarre le ${p.start_date}.</p>`,
+            });
+          }
+        });
+      });
+      if (queueRows.length) {
+        const { error: insErr } = await supabaseAdmin.from('notification_queue').insert(queueRows);
+        if (insErr) return res.status(500).json({ error: insErr.message });
+      }
+    }
+    await supabaseAdmin.from('projects').update({ start_reminder_sent: true }).in('id', dueProjects.map((p) => p.id));
+    result.startReminders = dueProjects.length;
+  }
+
+  // --- 3. Envoi groupé des notifications en attente ---
   const { data: queued, error: qErr } = await supabaseAdmin
     .from('notification_queue')
     .select('*')

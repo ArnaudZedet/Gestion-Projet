@@ -33,6 +33,7 @@ create table if not exists projects (
   repeat_unit text not null default 'aucune',
   repeat_every int not null default 1,
   late_notified_at timestamptz,
+  start_reminder_sent boolean not null default false,
   responsible_ids jsonb not null default '[]'::jsonb,
   rotate_responsible boolean not null default false,
   responsible_rotation_pool jsonb not null default '[]'::jsonb,

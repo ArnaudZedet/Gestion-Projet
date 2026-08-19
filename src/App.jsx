@@ -3,7 +3,7 @@ import { supabase } from './supabaseClient';
 import {
   LayoutDashboard, ListChecks, Users, CalendarDays, Bell,
   Plus, X, Pencil, Trash2, AlertTriangle, CheckCircle2, Clock3,
-  Search, Loader2, Inbox, GanttChartSquare, Grid3x3, MapPin, Lock, Target, Repeat,
+  Search, Loader2, Inbox, GanttChartSquare, MapPin, Lock, Target, Repeat,
   ClipboardList, Send, XCircle, Building2, Mail, Check,
   Flag, PlayCircle, ShieldAlert, GraduationCap, Milestone as MilestoneIcon, Megaphone, ClipboardCheck,
   ChevronLeft, ChevronRight, FolderPlus, List as ListIcon, Download, Copy, Upload, MessageSquare, Network, MessageCircle
@@ -176,6 +176,9 @@ const todayISO = () => toISODate(new Date());
 const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return toISODate(d); };
 const addMonths = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setMonth(d.getMonth() + n); return toISODate(d); };
 const addYears = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setFullYear(d.getFullYear() + n); return toISODate(d); };
+// Lundi de la semaine contenant cette date (pour répartir la charge des
+// tâches cycliques par semaine plutôt que juste tourner aveuglément).
+const startOfWeekISO = (iso) => { const dow = new Date(iso + 'T00:00:00').getDay(); return addDays(iso, dow === 0 ? -6 : 1 - dow); };
 
 const daysBetween = (isoDate) => {
   if (!isoDate) return null;
@@ -290,8 +293,8 @@ const ROW_MAPPERS = {
   },
   projects: {
     table: 'projects',
-    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, service: p.service || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null, responsible_ids: p.responsibleIds || [], rotate_responsible: !!p.rotateResponsible, responsible_rotation_pool: p.responsibleRotationPool || [], pending_approval: !!p.pendingApproval, created_by: p.createdBy || null }),
-    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', service: r.service || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null, responsibleIds: (r.responsible_ids && r.responsible_ids.length ? r.responsible_ids : (r.responsible_id ? [r.responsible_id] : [])), rotateResponsible: !!r.rotate_responsible, responsibleRotationPool: r.responsible_rotation_pool || [], pendingApproval: !!r.pending_approval, createdBy: r.created_by || '' }),
+    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, service: p.service || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null, start_reminder_sent: !!p.startReminderSent, responsible_ids: p.responsibleIds || [], rotate_responsible: !!p.rotateResponsible, responsible_rotation_pool: p.responsibleRotationPool || [], pending_approval: !!p.pendingApproval, created_by: p.createdBy || null }),
+    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', service: r.service || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null, startReminderSent: !!r.start_reminder_sent, responsibleIds: (r.responsible_ids && r.responsible_ids.length ? r.responsible_ids : (r.responsible_id ? [r.responsible_id] : [])), rotateResponsible: !!r.rotate_responsible, responsibleRotationPool: r.responsible_rotation_pool || [], pendingApproval: !!r.pending_approval, createdBy: r.created_by || '' }),
   },
   tasks: {
     table: 'tasks',
@@ -477,18 +480,6 @@ function responsibleIdsOf(t) {
 function myProjectIds(memberId, projects) {
   const ids = new Set();
   projects.forEach(p => { if ((p.teamIds || []).includes(memberId)) ids.add(p.id); });
-  return ids;
-}
-// Toutes les personnes impliquées (équipe déclarée + participantes aux tâches) sur un ensemble de projets
-function teamOfProjects(projectIds, tasks, projects) {
-  const ids = new Set();
-  projects.forEach(p => { if (projectIds.has(p.id)) (p.teamIds || []).forEach(id => ids.add(id)); });
-  tasks.forEach(t => {
-    if (!t.projectId || !projectIds.has(t.projectId)) return;
-    if (t.assigneeId) ids.add(t.assigneeId);
-    (t.pool || []).forEach(id => ids.add(id));
-    Object.keys(t.raci || {}).forEach(id => ids.add(id));
-  });
   return ids;
 }
 const isProjectLate = (p) => !!(p.endDate && p.status !== 'termine' && daysBetween(p.endDate) < 0);
@@ -1739,12 +1730,20 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
     if (!b.deadline) return -1;
     return a.deadline.localeCompare(b.deadline);
   };
+  // Les tâches/projets dont on est responsable passent avant ceux où on est
+  // juste convié (RACI C/I, pool, ou simple membre de l'équipe).
+  const amResponsibleTask = (t) => t.assigneeId === currentMemberId || (t.raci && t.raci[currentMemberId] === 'R');
+  const byResponsibleThenDeadline = (a, b) => {
+    const ra = amResponsibleTask(a), rb = amResponsibleTask(b);
+    if (ra !== rb) return ra ? -1 : 1;
+    return byDeadline(a, b);
+  };
 
   const grouped = filterProject === 'all';
   const projectGroups = grouped
-    ? visibleProjects.map(p => ({ project: p, items: filtered.filter(t => t.projectId === p.id).sort(byDeadline) })).filter(g => g.items.length > 0)
-    : [{ project: projects.find(p => p.id === filterProject), items: [...filtered].sort(byDeadline) }];
-  const noProject = filtered.filter(t => !projects.some(p => p.id === t.projectId) && matchesTeam(t) && filterService === 'all').sort(byDeadline);
+    ? visibleProjects.map(p => ({ project: p, items: filtered.filter(t => t.projectId === p.id).sort(byResponsibleThenDeadline) })).filter(g => g.items.length > 0)
+    : [{ project: projects.find(p => p.id === filterProject), items: [...filtered].sort(byResponsibleThenDeadline) }];
+  const noProject = filtered.filter(t => !projects.some(p => p.id === t.projectId) && matchesTeam(t) && filterService === 'all').sort(byResponsibleThenDeadline);
   const noProjectGroup = grouped && noProject.length ? { project: { id: '_none', name: 'Sans projet', color: '#94A3B8' }, items: noProject } : null;
 
   // Regroupement par service (couleur dominante), puis par ordre chronologique
@@ -2263,70 +2262,6 @@ function GanttView({ tasks, projects, members, openTask }) {
 }
 
 /* ---------------------------------------------------------------------- */
-/*  Rôle des participants (ex-RACI)                                       */
-/* ---------------------------------------------------------------------- */
-
-function RaciView({ tasks, projects, members, perm, currentMemberId, updateRaci }) {
-  const [filterProject, setFilterProject] = useState(projects[0]?.id || 'all');
-  const list = tasks.filter(t => filterProject === 'all' || t.projectId === filterProject);
-  const participantIds = new Set();
-  list.forEach(t => Object.keys(t.raci || {}).forEach(id => participantIds.add(id)));
-  const actualParticipants = members.filter(m => participantIds.has(m.id));
-  const relevantProjectIds = filterProject === 'all' ? new Set(projects.map(p => p.id)) : new Set([filterProject]);
-  const projectMembers = members.filter(m => teamOfProjects(relevantProjectIds, tasks, projects).has(m.id));
-  const visibleMembers = actualParticipants.length > 0 ? actualParticipants : (projectMembers.length > 0 ? projectMembers : members);
-  // Même règle que dans la fiche tâche : seul le responsable, l'approbateur
-  // RACI, le responsable du projet ou un administrateur peut modifier —
-  // évalué ligne par ligne puisque ça dépend de chaque tâche.
-  const canEditRow = (t) => canEditTask(t, currentMemberId, projects.find(p => p.id === t.projectId), perm.isManager);
-  const setRole = (task, memberId, role) => {
-    if (!canEditRow(task)) return;
-    const raci = { ...(task.raci || {}) };
-    if (role) raci[memberId] = role; else delete raci[memberId];
-    updateRaci(task.id, raci);
-  };
-  return (
-    <div>
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <select className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 bg-white focus:outline-none" value={filterProject} onChange={e => setFilterProject(e.target.value)}>
-          <option value="all">Toutes les tâches</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-        <div className="text-xs text-slate-400">Modifiable ici (ou depuis la fiche tâche) par le responsable, l'approbateur, le responsable du projet ou un administrateur</div>
-        <div className="flex gap-3 text-xs text-slate-400 ml-auto">{RACI_LEVELS.map(r => <div key={r.id} className="flex items-center gap-1.5"><span style={{ background: r.bg, color: r.color }} className="w-4 h-4 rounded flex items-center justify-center text-[10px] font-bold">{r.id}</span>{r.label}</div>)}</div>
-      </div>
-      {list.length === 0 ? <EmptyState icon={Grid3x3} title="Aucune tâche" /> : (
-        <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
-          <table className="text-sm min-w-full">
-            <thead><tr className="border-b border-slate-100">
-              <th className="text-left text-xs font-medium text-slate-400 px-4 py-2.5 sticky left-0 bg-white">Tâche</th>
-              {visibleMembers.map(m => <th key={m.id} className="px-2 py-2.5 text-center"><div className="flex flex-col items-center gap-1"><Avatar name={m.name} size={22} /><span className="text-[10px] text-slate-400 max-w-[64px] truncate">{m.name.split(' ')[0]}</span></div></th>)}
-            </tr></thead>
-            <tbody>
-              {list.map(t => (
-                <tr key={t.id} className="border-b border-slate-50 last:border-0">
-                  <td className="px-4 py-2 sticky left-0 bg-white text-xs font-medium text-slate-600 max-w-[220px] truncate flex items-center gap-1.5">
-                    {t.isGovernance && <GovIcon id={t.governanceType} size={11} className="text-purple-500 shrink-0" />}{t.title}
-                  </td>
-                  {visibleMembers.map(m => {
-                    const v = t.raci?.[m.id] || '';
-                    const editable = canEditRow(t);
-                    return (
-                      <td key={m.id} className="px-2 py-2 text-center">
-                        <RaciPicker memberId={m.id} value={v} disabled={!editable} onChange={(id, role) => setRole(t, id, role)} />
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ---------------------------------------------------------------------- */
 /*  Priorisation (matrice urgence × importance)                           */
 /* ---------------------------------------------------------------------- */
 
@@ -2416,9 +2351,11 @@ function TransmissionsView({ transmissions, members, currentMemberId, onPost }) 
       <div className="w-56 shrink-0 space-y-1.5">
         {channels.map(c => {
           const active = selected.service === c.service && selected.functionGroup === c.functionGroup;
+          const color = SERVICE_COLORS[c.service] || '#64748B';
           return (
             <button key={`${c.functionGroup}-${c.service}`} onClick={() => setSelected(c)}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm border ${active ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+              className="w-full text-left px-3 py-2 rounded-lg text-sm border font-medium"
+              style={active ? { background: color, borderColor: color, color: '#fff' } : { background: `${color}14`, borderColor: `${color}55`, color }}>
               {c.label}
             </button>
           );
@@ -2843,7 +2780,6 @@ function navFor(perm) {
   nav.push({ id: 'transmissions', label: 'Transmissions', Icon: MessageCircle, accent: '#0EA5E9' });
   if (perm.isReferent) {
     nav.push({ id: 'gantt', label: 'Durée des projets', Icon: GanttChartSquare, accent: '#A78BFA' });
-    nav.push({ id: 'raci', label: 'Rôle des participants', Icon: Grid3x3, accent: '#2DD4BF' });
   }
   if (perm.isManager) {
     nav.push({ id: 'priorisation', label: 'Priorisation', Icon: Target, accent: '#FB923C' });
@@ -3147,7 +3083,7 @@ function ReferentApp({ session, onSignOut }) {
   // passe une fois avant qu'un nom puisse ressortir une deuxième fois.
   // rotationPool = les personnes qui n'ont pas encore été tirées dans le
   // cycle en cours ; vide → on démarre un nouveau cycle (nouveau tirage).
-  const nextRotatedAssignee = (t, teamOverride) => {
+  const nextRotatedAssignee = (t, teamOverride, targetDate) => {
     const rawTeam = teamOverride || projects.find(p => p.id === t.projectId)?.teamIds || [];
     // Certaines personnes (toujours approbatrices, ou fonction "Manager") ne
     // doivent jamais être tirées au sort comme responsable, même en
@@ -3162,15 +3098,29 @@ function ReferentApp({ session, onSignOut }) {
       pool = shuffleArray(team);
       if (pool.length > 1 && pool[0] === t.assigneeId) [pool[0], pool[1]] = [pool[1], pool[0]];
     }
-    const [assigneeId, ...rest] = pool;
+    // Répartition de charge : parmi les personnes dont c'est le tour dans le
+    // cycle courant, on privilégie celle qui a le moins de tâches déjà
+    // prévues la même semaine, pour éviter qu'une personne cumule plusieurs
+    // tâches pendant qu'une autre n'en a aucune — sans casser l'équité du
+    // sac tournant (le choix reste parmi les personnes dont c'est le tour).
+    let pickIdx = 0;
+    if (targetDate && pool.length > 1) {
+      const weekStart = startOfWeekISO(targetDate);
+      const weekEnd = addDays(weekStart, 6);
+      const loadOf = (id) => tasks.filter(x => x.assigneeId === id && x.status !== 'termine' && x.deadline >= weekStart && x.deadline <= weekEnd).length;
+      let bestLoad = Infinity;
+      pool.forEach((id, i) => { const l = loadOf(id); if (l < bestLoad) { bestLoad = l; pickIdx = i; } });
+    }
+    const assigneeId = pool[pickIdx];
+    const rest = [...pool.slice(0, pickIdx), ...pool.slice(pickIdx + 1)];
     return { assigneeId, rotationPool: rest };
   };
 
   // Même principe que nextRotatedAssignee, mais pour le mode Équipe (RACI) :
   // le rôle "R" (Responsable) tourne, les autres rôles (A/C/I) restent tels quels.
-  const rotateRaciResponsible = (t, teamOverride) => {
+  const rotateRaciResponsible = (t, teamOverride, targetDate) => {
     const currentR = Object.entries(t.raci || {}).find(([, r]) => r === 'R')?.[0] || '';
-    const { assigneeId, rotationPool } = nextRotatedAssignee({ ...t, assigneeId: currentR }, teamOverride);
+    const { assigneeId, rotationPool } = nextRotatedAssignee({ ...t, assigneeId: currentR }, teamOverride, targetDate);
     const raci = { ...(t.raci || {}) };
     Object.keys(raci).forEach(id => { if (raci[id] === 'R') delete raci[id]; });
     if (assigneeId) raci[assigneeId] = 'R';
@@ -3196,11 +3146,11 @@ function ReferentApp({ session, onSignOut }) {
       }
       const clone = { ...t, id: uid(), status: 'a_faire', createdAt: todayISO(), startDate: nextStart, deadline: nextDeadline };
       if (t.rotateAssignee && t.assignMode === 'individuel') {
-        const { assigneeId, rotationPool } = nextRotatedAssignee(t);
+        const { assigneeId, rotationPool } = nextRotatedAssignee(t, undefined, nextDeadline);
         clone.assigneeId = assigneeId;
         clone.rotationPool = rotationPool;
       } else if (t.rotateAssignee && t.assignMode === 'equipe') {
-        const { raci, rotationPool } = rotateRaciResponsible(t);
+        const { raci, rotationPool } = rotateRaciResponsible(t, undefined, nextDeadline);
         clone.raci = raci;
         clone.rotationPool = rotationPool;
       }
@@ -3227,11 +3177,6 @@ function ReferentApp({ session, onSignOut }) {
     setTasks(prev => [...prev, clone]);
     warnIfFailed(await upsertRow('tasks', clone), 'La copie de la tâche');
     setTaskModal({ task: clone });
-  };
-  const updateRaci = async (taskId, raci) => {
-    const updated = { ...tasks.find(t => t.id === taskId), raci };
-    setTasks(prev => prev.map(t => t.id === taskId ? updated : t));
-    warnIfFailed(await upsertRow('tasks', updated), 'Le rôle du participant');
   };
 
   const importMembers = (newMembers) => {
@@ -3286,7 +3231,12 @@ function ReferentApp({ session, onSignOut }) {
     // Si les dates ou le statut changent, on réarme l'alerte de retard pour
     // qu'elle puisse se redéclencher si le projet redevient en retard plus tard.
     const datesOrStatusChanged = exists && (prevProject.endDate !== projectObjInput.endDate || prevProject.status !== projectObjInput.status);
-    const projectObj = datesOrStatusChanged ? { ...projectObjInput, lateNotifiedAt: null } : projectObjInput;
+    // Pareil pour le rappel de démarrage (veille du jour ouvré) si la date
+    // de début change, pour qu'il reparte du bon jour.
+    const startDateChanged = exists && prevProject.startDate !== projectObjInput.startDate;
+    const projectObj = (datesOrStatusChanged || startDateChanged)
+      ? { ...projectObjInput, lateNotifiedAt: datesOrStatusChanged ? null : projectObjInput.lateNotifiedAt, startReminderSent: startDateChanged ? false : projectObjInput.startReminderSent }
+      : projectObjInput;
     setProjects(prev => exists ? prev.map(p => p.id === projectObj.id ? projectObj : p) : [...prev, projectObj]);
     warnIfFailed(await upsertRow('projects', projectObj), 'Le projet');
     if (governanceTasks && governanceTasks.length) {
@@ -3364,7 +3314,7 @@ function ReferentApp({ session, onSignOut }) {
         newResponsibleIds = [rotated.assigneeId];
         newResponsibleRotationPool = rotated.rotationPool;
       }
-      const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd, lateNotifiedAt: null, responsibleIds: newResponsibleIds, responsibleRotationPool: newResponsibleRotationPool };
+      const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd, lateNotifiedAt: null, startReminderSent: false, responsibleIds: newResponsibleIds, responsibleRotationPool: newResponsibleRotationPool };
       renewedProject = newProject;
       setProjects(prev => [...prev, newProject]);
       warnIfFailed(await upsertRow('projects', newProject), 'Le renouvellement du projet');
@@ -3382,11 +3332,11 @@ function ReferentApp({ session, onSignOut }) {
           deadline: shiftByRepeat(t.deadline, projectObj.repeatUnit, projectObj.repeatEvery),
         };
         if (t.rotateAssignee && t.assignMode === 'individuel') {
-          const { assigneeId, rotationPool } = nextRotatedAssignee(t, newProject.teamIds);
+          const { assigneeId, rotationPool } = nextRotatedAssignee(t, newProject.teamIds, clone.deadline);
           clone.assigneeId = assigneeId;
           clone.rotationPool = rotationPool;
         } else if (t.rotateAssignee && t.assignMode === 'equipe') {
-          const { raci, rotationPool } = rotateRaciResponsible(t, newProject.teamIds);
+          const { raci, rotationPool } = rotateRaciResponsible(t, newProject.teamIds, clone.deadline);
           clone.raci = raci;
           clone.rotationPool = rotationPool;
         } else if (t.assignMode === 'individuel' && newResponsibleIds[0] && t.assigneeId && (projectObj.responsibleIds || []).includes(t.assigneeId)) {
@@ -3426,7 +3376,7 @@ function ReferentApp({ session, onSignOut }) {
   };
   const duplicateProject = async (original) => {
     const id = uid();
-    const clone = { ...original, id, name: `${original.name} (copie)`, status: 'en_cours', pendingApproval: false, createdBy: connectedAs, lateNotifiedAt: null };
+    const clone = { ...original, id, name: `${original.name} (copie)`, status: 'en_cours', pendingApproval: false, createdBy: connectedAs, lateNotifiedAt: null, startReminderSent: false };
     setProjects(prev => [...prev, clone]);
     warnIfFailed(await upsertRow('projects', clone), 'La copie du projet');
     const oldTasks = tasks.filter(t => t.projectId === original.id);
@@ -3607,7 +3557,6 @@ function ReferentApp({ session, onSignOut }) {
           {view === 'planning' && <PlanningView members={members} tasks={scopedTasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
           {view === 'transmissions' && <TransmissionsView transmissions={transmissions} members={members} currentMemberId={connectedAs} onPost={postTransmission} />}
           {view === 'gantt' && <GanttView tasks={scopedTasks} members={members} projects={scopedProjects} openTask={(t) => setTaskModal({ task: t })} />}
-          {view === 'raci' && <RaciView tasks={scopedTasks} members={members} perm={perm} currentMemberId={connectedAs} projects={scopedProjects} updateRaci={updateRaci} />}
           {view === 'priorisation' && <PrioritisationView tasks={tasks} members={members} openTask={(t) => setTaskModal({ task: t })} />}
           {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} onImport={importMembers} />}
           {view === 'contacts' && <ContactsView contacts={externalContacts} perm={perm} editContact={(c) => setContactModal({ contact: c })} newContact={() => setContactModal({ contact: null })} />}

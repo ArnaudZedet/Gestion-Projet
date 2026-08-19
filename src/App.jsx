@@ -6,7 +6,7 @@ import {
   Search, Loader2, Inbox, GanttChartSquare, MapPin, Lock, Target, Repeat,
   ClipboardList, Send, XCircle, Building2, Mail, Check,
   Flag, PlayCircle, ShieldAlert, GraduationCap, Milestone as MilestoneIcon, Megaphone, ClipboardCheck,
-  ChevronLeft, ChevronRight, FolderPlus, List as ListIcon, Download, Copy, Upload, MessageSquare, Network, MessageCircle
+  ChevronLeft, ChevronRight, ChevronDown, FolderPlus, List as ListIcon, Download, Copy, Upload, MessageSquare, Network, MessageCircle
 } from 'lucide-react';
 
 /* ---------------------------------------------------------------------- */
@@ -1551,6 +1551,8 @@ function RequestsView({ requests, members, externalContacts, perm, onApprove, on
 /* ---------------------------------------------------------------------- */
 
 function Dashboard({ tasks, members, projects, appointments, connectedAs, openTask, onClaim, onOpenProject }) {
+  const [expandedMembers, setExpandedMembers] = useState(new Set());
+  const toggleExpanded = (id) => setExpandedMembers(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
   const active = tasks.filter(t => t.status !== 'termine');
   const overdue = active.filter(t => t.deadline && daysBetween(t.deadline) < 0);
   const dueSoon = active.filter(t => t.deadline && daysBetween(t.deadline) >= 0 && daysBetween(t.deadline) <= 3);
@@ -1606,35 +1608,38 @@ function Dashboard({ tasks, members, projects, appointments, connectedAs, openTa
               </div>
             </div>
           )}
-          <h3 className="text-sm font-semibold text-slate-700 mb-4" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Projets par personne</h3>
-          <div className="space-y-4">
-            {projectsByMember.map(w => (
-              <div key={w.member.id}>
-                <div className="flex items-center gap-2 mb-1.5">
-                  <Avatar name={w.member.name} size={22} />
-                  <span className="text-xs font-medium text-slate-600">{w.member.name}</span>
-                  <span className="text-xs text-slate-400">{w.projects.length} projet{w.projects.length !== 1 ? 's' : ''}</span>
+          <h3 className="text-sm font-semibold text-slate-700 mb-3" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Projets par personne</h3>
+          <div className="divide-y divide-slate-50">
+            {projectsByMember.map(w => {
+              const isOpen = expandedMembers.has(w.member.id);
+              return (
+                <div key={w.member.id}>
+                  <button onClick={() => w.projects.length > 0 && toggleExpanded(w.member.id)}
+                    className={`w-full flex items-center gap-2.5 py-2.5 text-left ${w.projects.length > 0 ? 'cursor-pointer hover:bg-slate-50 rounded-lg px-1.5 -mx-1.5' : ''}`}>
+                    <Avatar name={w.member.name} size={24} />
+                    <span className="text-xs font-medium text-slate-600 flex-1">{w.member.name}</span>
+                    <span className="text-xs text-slate-400">{w.projects.length} projet{w.projects.length !== 1 ? 's' : ''}</span>
+                    {w.projects.length > 0 && <ChevronDown size={14} className={`text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />}
+                  </button>
+                  {isOpen && w.projects.length > 0 && (
+                    <div className="pl-9 pb-2.5 space-y-1">
+                      {w.projects.map(p => {
+                        const color = (p.service && SERVICE_COLORS[p.service]) || p.color || '#64748B';
+                        const amResponsible = (p.responsibleIds || []).includes(w.member.id);
+                        return (
+                          <button key={p.id} onClick={() => onOpenProject && onOpenProject(p)}
+                            className="w-full flex items-center gap-2 text-left px-2 py-1.5 rounded-lg hover:bg-slate-50">
+                            <span style={{ background: color }} className="w-1.5 h-1.5 rounded-full shrink-0" />
+                            <span className="text-xs font-medium text-slate-600 truncate flex-1">{p.name}{amResponsible ? ' · Responsable' : ''}</span>
+                            <span className="text-[11px] text-slate-400 shrink-0">{p.startDate ? fmtDate(p.startDate) : '?'} → {p.endDate ? fmtDate(p.endDate) : '?'}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-                {w.projects.length === 0 ? (
-                  <div className="pl-7 text-xs text-slate-300">Aucun projet actif</div>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5 pl-7">
-                    {w.projects.map(p => {
-                      const color = (p.service && SERVICE_COLORS[p.service]) || p.color || '#64748B';
-                      const amResponsible = (p.responsibleIds || []).includes(w.member.id);
-                      return (
-                        <button key={p.id} onClick={() => onOpenProject && onOpenProject(p)}
-                          className="text-xs px-2.5 py-1 rounded-full border flex items-center gap-1.5 font-medium"
-                          style={{ borderColor: `${color}55`, background: `${color}14`, color }}>
-                          <span style={{ background: color }} className="w-1.5 h-1.5 rounded-full shrink-0" />
-                          {p.name}{amResponsible ? ' · Responsable' : ''}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
         <div className="lg:col-span-2 space-y-4">

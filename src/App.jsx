@@ -3083,7 +3083,7 @@ function ReferentApp({ session, onSignOut }) {
   // passe une fois avant qu'un nom puisse ressortir une deuxième fois.
   // rotationPool = les personnes qui n'ont pas encore été tirées dans le
   // cycle en cours ; vide → on démarre un nouveau cycle (nouveau tirage).
-  const nextRotatedAssignee = (t, teamOverride, targetDate) => {
+  const nextRotatedAssignee = (t, teamOverride, targetDate, loadFn) => {
     const rawTeam = teamOverride || projects.find(p => p.id === t.projectId)?.teamIds || [];
     // Certaines personnes (toujours approbatrices, ou fonction "Manager") ne
     // doivent jamais être tirées au sort comme responsable, même en
@@ -3099,17 +3099,22 @@ function ReferentApp({ session, onSignOut }) {
       if (pool.length > 1 && pool[0] === t.assigneeId) [pool[0], pool[1]] = [pool[1], pool[0]];
     }
     // Répartition de charge : parmi les personnes dont c'est le tour dans le
-    // cycle courant, on privilégie celle qui a le moins de tâches déjà
-    // prévues la même semaine, pour éviter qu'une personne cumule plusieurs
-    // tâches pendant qu'une autre n'en a aucune — sans casser l'équité du
-    // sac tournant (le choix reste parmi les personnes dont c'est le tour).
+    // cycle courant — même juste après une remise à zéro complète du sac
+    // tournant, ce choix s'applique toujours —, on privilégie celle qui a le
+    // moins de charge sur la période concernée (tâches de la semaine par
+    // défaut, ou un autre critère via loadFn, ex. projets qui se chevauchent
+    // pour la rotation du responsable de projet), pour éviter qu'une
+    // personne cumule pendant qu'une autre n'a rien — sans casser l'équité
+    // du sac tournant (le choix reste parmi les personnes dont c'est le tour).
     let pickIdx = 0;
     if (targetDate && pool.length > 1) {
-      const weekStart = startOfWeekISO(targetDate);
-      const weekEnd = addDays(weekStart, 6);
-      const loadOf = (id) => tasks.filter(x => x.assigneeId === id && x.status !== 'termine' && x.deadline >= weekStart && x.deadline <= weekEnd).length;
+      const load = loadFn || ((id) => {
+        const weekStart = startOfWeekISO(targetDate);
+        const weekEnd = addDays(weekStart, 6);
+        return tasks.filter(x => x.assigneeId === id && x.status !== 'termine' && x.deadline >= weekStart && x.deadline <= weekEnd).length;
+      });
       let bestLoad = Infinity;
-      pool.forEach((id, i) => { const l = loadOf(id); if (l < bestLoad) { bestLoad = l; pickIdx = i; } });
+      pool.forEach((id, i) => { const l = load(id); if (l < bestLoad) { bestLoad = l; pickIdx = i; } });
     }
     const assigneeId = pool[pickIdx];
     const rest = [...pool.slice(0, pickIdx), ...pool.slice(pickIdx + 1)];
@@ -3310,7 +3315,13 @@ function ReferentApp({ session, onSignOut }) {
         // La rotation ne gère qu'un seul poste tournant : s'il y avait
         // plusieurs responsables fixes, le renouvellement n'en garde qu'un,
         // tiré au sort (annoncé dans le libellé de la case à cocher).
-        const rotated = nextRotatedAssignee({ assigneeId: newResponsibleIds[0], rotationPool: projectObj.responsibleRotationPool }, projectObj.teamIds);
+        // Parmi les personnes dont c'est le tour, on privilégie celle qui a
+        // le moins de projets déjà en cours sur la même période, pour
+        // éviter qu'une personne cumule plusieurs responsabilités de projet
+        // à la fois.
+        const projectLoadOf = (id) => projects.filter(p => p.id !== projectObj.id && p.status !== 'termine' &&
+          (p.responsibleIds || []).includes(id) && p.startDate && p.endDate && p.startDate <= nextEnd && p.endDate >= nextStart).length;
+        const rotated = nextRotatedAssignee({ assigneeId: newResponsibleIds[0], rotationPool: projectObj.responsibleRotationPool }, projectObj.teamIds, nextStart, projectLoadOf);
         newResponsibleIds = [rotated.assigneeId];
         newResponsibleRotationPool = rotated.rotationPool;
       }

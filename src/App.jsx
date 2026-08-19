@@ -2217,10 +2217,76 @@ function PlanningView({ members, tasks, appointments, externalContacts, perm, cu
 /*  Durée des projets (ex-Gantt)                                          */
 /* ---------------------------------------------------------------------- */
 
-// Même format calendrier que Planning, mais avec les projets (durée
-// globale) plutôt que les tâches — et une liste dépliable en dessous, même
-// principe que "Projets par personne" dans la Vue d'ensemble, pour voir les
-// tâches de chaque projet sans quitter la page.
+// Semaine par semaine, chaque projet est dessiné une seule fois en barre
+// continue sur ses jours d'activité (grille CSS, colonnes = jours de la
+// semaine), au lieu de répéter son nom dans chaque case comme un agenda
+// classique. Plusieurs projets actifs la même semaine s'empilent chacun
+// sur leur propre ligne (recherche de la première ligne libre).
+function ProjectMonthCalendar({ year, month, projects, onPrev, onNext, onOpenProject }) {
+  const cells = monthMatrix(year, month);
+  const monthLabel = new Date(year, month, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 p-4">
+      <div className="flex items-center justify-between mb-3">
+        <button onClick={onPrev} className="p-1.5 rounded-lg hover:bg-slate-50 text-slate-400"><ChevronLeft size={16} /></button>
+        <div className="text-sm font-semibold text-slate-700 capitalize" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>{monthLabel}</div>
+        <button onClick={onNext} className="p-1.5 rounded-lg hover:bg-slate-50 text-slate-400"><ChevronRight size={16} /></button>
+      </div>
+      <div className="grid grid-cols-7 gap-1 text-[10px] text-slate-400 mb-1 uppercase">
+        {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map(d => <div key={d} className="text-center py-1">{d}</div>)}
+      </div>
+      <div className="space-y-1">
+        {weeks.map((week, wi) => {
+          const isoWeek = week.map(isoOfDate);
+          const weekDates = isoWeek.filter(Boolean);
+          if (weekDates.length === 0) return null;
+          const wMin = weekDates[0], wMax = weekDates[weekDates.length - 1];
+          const active = projects.filter(p => p.startDate <= wMax && p.endDate >= wMin)
+            .map(p => {
+              const startCol = isoWeek.findIndex(iso => iso && iso >= p.startDate);
+              let endCol = 6;
+              for (let i = 6; i >= 0; i--) { if (isoWeek[i] && isoWeek[i] <= p.endDate) { endCol = i; break; } }
+              return { p, startCol, endCol, lane: 0 };
+            })
+            .sort((a, b) => a.startCol - b.startCol || a.endCol - b.endCol);
+          const lanes = [];
+          active.forEach(item => {
+            let li = lanes.findIndex(lane => lane.every(e => e.endCol < item.startCol || e.startCol > item.endCol));
+            if (li === -1) { lanes.push([item]); li = lanes.length - 1; } else lanes[li].push(item);
+            item.lane = li;
+          });
+          const laneCount = Math.max(1, lanes.length);
+          return (
+            <div key={wi} className="grid grid-cols-7 gap-1 pb-1 border-b border-slate-50 last:border-0" style={{ gridAutoRows: '18px', minHeight: 18 + laneCount * 20 }}>
+              {week.map((d, i) => {
+                const today = isoOfDate(d) === todayISO();
+                return (
+                  <div key={i} style={{ gridColumn: i + 1, gridRow: 1 }}
+                    className={`text-[10px] px-1 rounded ${(i === 5 || i === 6) ? 'bg-slate-50/70' : ''} ${today ? 'text-blue-600 font-semibold' : 'text-slate-400'}`}>
+                    {d ? d.getDate() : ''}
+                  </div>
+                );
+              })}
+              {active.map(({ p, startCol, endCol, lane }) => {
+                const color = (p.service && SERVICE_COLORS[p.service]) || p.color || '#64748B';
+                return (
+                  <button key={p.id} onClick={() => onOpenProject(p)}
+                    style={{ gridColumn: `${startCol + 1} / ${endCol + 2}`, gridRow: lane + 2, background: `${color}22`, color }}
+                    className="text-[10px] font-medium rounded px-1.5 h-[18px] flex items-center truncate hover:brightness-95">
+                    {p.name}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 function GanttView({ tasks, projects, members, openTask, onOpenProject }) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
   const [filterService, setFilterService] = useState('all');
@@ -2239,10 +2305,6 @@ function GanttView({ tasks, projects, members, openTask, onOpenProject }) {
   const filteredProjects = projects.filter(p => p.startDate && p.endDate &&
     (filterService === 'all' || p.service === filterService) && matchesTeam(p));
 
-  const dayProjects = {};
-  filteredProjects.forEach(p => {
-    for (let d = p.startDate; d <= p.endDate; d = addDays(d, 1)) (dayProjects[d] = dayProjects[d] || []).push(p);
-  });
   const sortedProjects = [...filteredProjects].sort((a, b) => a.startDate.localeCompare(b.startDate));
 
   return (
@@ -2264,19 +2326,11 @@ function GanttView({ tasks, projects, members, openTask, onOpenProject }) {
         <EmptyState icon={GanttChartSquare} title="Aucun projet planifiable" subtitle="Renseignez une durée de projet (début et fin), ou ajustez les filtres." />
       ) : (
         <>
-          <MonthCalendar
-            year={cursor.year} month={cursor.month}
+          <ProjectMonthCalendar
+            year={cursor.year} month={cursor.month} projects={filteredProjects}
             onPrev={() => setCursor(c => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 })}
             onNext={() => setCursor(c => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 })}
-            renderDay={(iso) => (dayProjects[iso] || []).map(p => {
-              const color = (p.service && SERVICE_COLORS[p.service]) || p.color || '#64748B';
-              return (
-                <button key={p.id} onClick={() => onOpenProject(p)} style={{ background: `${color}22`, color }}
-                  className="w-full text-left text-[10px] leading-tight rounded px-1 py-0.5 block truncate font-medium">
-                  {p.name}
-                </button>
-              );
-            })}
+            onOpenProject={onOpenProject}
           />
           <div className="bg-white rounded-2xl border border-slate-100 p-4">
             <h3 className="text-sm font-semibold text-slate-700 mb-2" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Projets ({sortedProjects.length})</h3>

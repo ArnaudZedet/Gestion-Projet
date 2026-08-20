@@ -2,6 +2,10 @@ import { supabaseAdmin } from './_supabaseAdmin.js';
 import { sendEmail } from './_resend.js';
 import { requireCron } from './_cron.js';
 
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 // Tourne tous les lundis matin (voir vercel.json) : envoie aux managers un
 // récapitulatif des projets en cours (nombre de tâches ouvertes, en retard,
 // à échéance dans la semaine).
@@ -31,7 +35,7 @@ export default async function handler(req, res) {
       const bits = [`${projTasks.length} tâche${projTasks.length !== 1 ? 's' : ''} ouverte${projTasks.length !== 1 ? 's' : ''}`];
       if (overdue) bits.push(`${overdue} en retard`);
       if (dueSoon) bits.push(`${dueSoon} à échéance cette semaine`);
-      return `<li><strong>${p.name}</strong> — ${bits.join(', ')}</li>`;
+      return `<li><strong>${escapeHtml(p.name)}</strong> — ${bits.join(', ')}</li>`;
     })
     .join('');
 

@@ -414,6 +414,16 @@ function warnIfFailed(ok, action) {
   if (!ok) showToast(`${action} n'a pas pu être enregistré(e) en base (problème de connexion). Vérifiez votre connexion internet et réessayez — sinon la modification sera perdue au prochain rechargement.`);
 }
 
+// Les emails de notification interpolent du texte saisi par n'importe quel
+// collaborateur (titre de tâche, nom de projet, message de transmission…)
+// dans du HTML envoyé à d'autres personnes — sans échappement, "<img
+// src=x onerror=...>" ou un lien caché s'exécuterait/s'afficherait tel quel
+// dans la boîte mail du destinataire. On échappe systématiquement avant
+// interpolation dans un template d'email.
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 
 /* ---------------------------------------------------------------------- */
 /*  Permissions & aides de portée (référent → "ses" projets)              */
@@ -825,7 +835,19 @@ function TaskModal({ task, initialProjectId, members, projects, perm, currentMem
 
       {form.assignMode === 'individuel' && (
         <Field label="Assignée à">
-          <select disabled={locked} className={inputCls} value={form.assigneeId} onChange={e => setForm({ ...form, assigneeId: e.target.value })}>
+          <select disabled={locked} className={inputCls} value={form.assigneeId} onChange={e => {
+            const newId = e.target.value;
+            setForm(f => {
+              // responsibleIdsOf() lit le RACI "R" avant assigneeId : si on ne
+              // le resynchronise pas ici, un "R" posé à la création (ou par un
+              // ancien choix) continue de désigner l'ancienne personne comme
+              // responsable après ce changement.
+              const raci = { ...f.raci };
+              Object.keys(raci).forEach(id => { if (raci[id] === 'R' && id !== newId) delete raci[id]; });
+              if (newId) raci[newId] = 'R';
+              return { ...f, assigneeId: newId, raci };
+            });
+          }}>
             <option value="">— non assignée —</option>
             {availableMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
@@ -1116,20 +1138,26 @@ function ProjectModal({ project, members, externalContacts, tasks, projects, cur
         const mm = members.find(x => x.id === mid);
         return !(mm?.alwaysApprover || mm?.role === 'Manager');
       });
-      let pool = shuffleArray(eligible.length > 0 ? eligible : projectObj.teamIds);
-      // Comme au renouvellement : parmi les candidats, on prend celui qui a
-      // le moins de projets déjà en cours sur la même période — sinon deux
-      // projets créés séparément (pas le même cycle) peuvent tomber tous
-      // les deux sur la même personne par pur hasard.
-      if (projectObj.startDate && projectObj.endDate && projects && pool.length > 1) {
-        const loadOf = (id) => projects.filter(p => (p.responsibleIds || []).includes(id) && p.status !== 'termine' &&
-          p.startDate && p.endDate && p.startDate <= projectObj.endDate && p.endDate >= projectObj.startDate).length;
-        let bestIdx = 0, bestLoad = Infinity;
-        pool.forEach((id, i) => { const l = loadOf(id); if (l < bestLoad) { bestLoad = l; bestIdx = i; } });
-        if (bestIdx > 0) pool = [pool[bestIdx], ...pool.slice(0, bestIdx), ...pool.slice(bestIdx + 1)];
+      // Si personne dans l'équipe n'est éligible (tous exclus du roulement),
+      // on laisse le responsable vide plutôt que de retomber sur l'équipe
+      // brute — piocher quand même violerait la règle d'exclusion appliquée
+      // partout ailleurs (voir nextRotatedAssignee).
+      if (eligible.length > 0) {
+        let pool = shuffleArray(eligible);
+        // Comme au renouvellement : parmi les candidats, on prend celui qui a
+        // le moins de projets déjà en cours sur la même période — sinon deux
+        // projets créés séparément (pas le même cycle) peuvent tomber tous
+        // les deux sur la même personne par pur hasard.
+        if (projectObj.startDate && projectObj.endDate && projects && pool.length > 1) {
+          const loadOf = (id) => projects.filter(p => (p.responsibleIds || []).includes(id) && p.status !== 'termine' &&
+            p.startDate && p.endDate && p.startDate <= projectObj.endDate && p.endDate >= projectObj.startDate).length;
+          let bestIdx = 0, bestLoad = Infinity;
+          pool.forEach((id, i) => { const l = loadOf(id); if (l < bestLoad) { bestLoad = l; bestIdx = i; } });
+          if (bestIdx > 0) pool = [pool[bestIdx], ...pool.slice(0, bestIdx), ...pool.slice(bestIdx + 1)];
+        }
+        projectObj.responsibleIds = [pool[0]];
+        projectObj.responsibleRotationPool = pool.slice(1);
       }
-      projectObj.responsibleIds = [pool[0]];
-      projectObj.responsibleRotationPool = pool.slice(1);
     }
     // Les étapes générées automatiquement suivent le responsable du projet
     // (choisi manuellement ou tiré au sort ci-dessus), pas forcément la
@@ -3138,7 +3166,7 @@ function ReferentApp({ session, onSignOut }) {
         body: JSON.stringify({
           to: managerEmails,
           subject: `Suggestion de ${currentMember?.name || myEmail}`,
-          html: `<p><strong>${currentMember?.name || myEmail}</strong> (${myEmail}) a laissé un commentaire :</p><p>${message.replace(/\n/g, '<br/>')}</p>`,
+          html: `<p><strong>${escapeHtml(currentMember?.name || myEmail)}</strong> (${escapeHtml(myEmail)}) a laissé un commentaire :</p><p>${escapeHtml(message).replace(/\n/g, '<br/>')}</p>`,
         }),
       });
       return res.ok;
@@ -3158,7 +3186,7 @@ function ReferentApp({ session, onSignOut }) {
     if (recipients.length) {
       const channelLabel = `${functionGroup === 'Secrétaire' ? 'Secrétaires' : 'Manipulateurs'} ${service}`;
       notifyByEmail(recipients, `Nouvelle transmission — ${channelLabel}`,
-        `<p><strong>${currentMember?.name || 'Quelqu\'un'}</strong> a laissé un message dans la transmission <strong>${channelLabel}</strong> :</p><p>${message.replace(/\n/g, '<br/>')}</p>`);
+        `<p><strong>${escapeHtml(currentMember?.name || 'Quelqu\'un')}</strong> a laissé un message dans la transmission <strong>${escapeHtml(channelLabel)}</strong> :</p><p>${escapeHtml(message).replace(/\n/g, '<br/>')}</p>`);
     }
   };
 
@@ -3204,18 +3232,18 @@ function ReferentApp({ session, onSignOut }) {
     (project.teamIds || []).filter(id => id !== connectedAs).forEach(id => {
       const m = members.find(x => x.id === id);
       if (m?.email) notifyByEmail([m.email], `Vous avez été affecté(e) au projet « ${project.name} »`,
-        `<p>Bonjour ${m.name},</p><p>Vous avez été affecté(e) au projet <strong>${project.name}</strong>.</p>${project.description ? `<p>${project.description}</p>` : ''}`);
+        `<p>Bonjour ${escapeHtml(m.name)},</p><p>Vous avez été affecté(e) au projet <strong>${escapeHtml(project.name)}</strong>.</p>${project.description ? `<p>${escapeHtml(project.description)}</p>` : ''}`);
     });
     (project.responsibleIds || []).filter(id => id !== connectedAs).forEach(id => {
       const rm = members.find(x => x.id === id);
       if (rm?.email) notifyByEmail([rm.email], `Vous êtes responsable du projet « ${project.name} »`,
-        `<p>Bonjour ${rm.name},</p><p>Vous êtes responsable du projet <strong>${project.name}</strong>.</p>`);
+        `<p>Bonjour ${escapeHtml(rm.name)},</p><p>Vous êtes responsable du projet <strong>${escapeHtml(project.name)}</strong>.</p>`);
     });
     if (project.pendingApproval) {
       const managerEmails = members.filter(m => m.accessLevel === 'manager' && m.email).map(m => m.email);
       const creator = members.find(m => m.id === project.createdBy);
       if (managerEmails.length) notifyByEmail(managerEmails, `Projet en attente de validation : ${project.name}`,
-        `<p>${creator?.name || 'Un utilisateur'} a créé le projet <strong>${project.name}</strong>, qui attend votre validation.</p>`);
+        `<p>${escapeHtml(creator?.name || 'Un utilisateur')} a créé le projet <strong>${escapeHtml(project.name)}</strong>, qui attend votre validation.</p>`);
     }
   };
 
@@ -3227,24 +3255,24 @@ function ReferentApp({ session, onSignOut }) {
     added.forEach(id => {
       const m = members.find(x => x.id === id);
       if (m?.email) notifyByEmail([m.email], `Vous avez été affecté(e) au projet « ${next.name} »`,
-        `<p>Bonjour ${m.name},</p><p>Vous avez été affecté(e) au projet <strong>${next.name}</strong>.</p>${next.description ? `<p>${next.description}</p>` : ''}`);
+        `<p>Bonjour ${escapeHtml(m.name)},</p><p>Vous avez été affecté(e) au projet <strong>${escapeHtml(next.name)}</strong>.</p>${next.description ? `<p>${escapeHtml(next.description)}</p>` : ''}`);
     });
     removed.forEach(id => {
       const m = members.find(x => x.id === id);
       if (m?.email) notifyByEmail([m.email], `Vous avez été retiré(e) du projet « ${next.name} »`,
-        `<p>Bonjour ${m.name},</p><p>Vous n'êtes plus affecté(e) au projet <strong>${next.name}</strong>.</p>`);
+        `<p>Bonjour ${escapeHtml(m.name)},</p><p>Vous n'êtes plus affecté(e) au projet <strong>${escapeHtml(next.name)}</strong>.</p>`);
     });
     const prevResponsibles = prev.responsibleIds || [];
     const nextResponsibles = next.responsibleIds || [];
     nextResponsibles.filter(id => !prevResponsibles.includes(id) && id !== connectedAs).forEach(id => {
       const rm = members.find(x => x.id === id);
       if (rm?.email) notifyByEmail([rm.email], `Vous êtes responsable du projet « ${next.name} »`,
-        `<p>Bonjour ${rm.name},</p><p>Vous êtes désormais responsable du projet <strong>${next.name}</strong>.</p>`);
+        `<p>Bonjour ${escapeHtml(rm.name)},</p><p>Vous êtes désormais responsable du projet <strong>${escapeHtml(next.name)}</strong>.</p>`);
     });
     if (prev.pendingApproval && !next.pendingApproval) {
       const creator = members.find(m => m.id === next.createdBy);
       if (creator?.email && creator.id !== connectedAs) notifyByEmail([creator.email], `Projet validé : ${next.name}`,
-        `<p>Bonjour ${creator.name},</p><p>Votre projet <strong>${next.name}</strong> a été validé par un administrateur.</p>`);
+        `<p>Bonjour ${escapeHtml(creator.name)},</p><p>Votre projet <strong>${escapeHtml(next.name)}</strong> a été validé par un administrateur.</p>`);
     }
     // Volontairement pas de notification sur les simples changements de dates/statut
     // du projet : pour ne pas surcharger les emails, on ne notifie que
@@ -3264,7 +3292,7 @@ function ReferentApp({ session, onSignOut }) {
     newlyAssigned.forEach(id => {
       const m = members.find(x => x.id === id);
       if (m?.email) notifyByEmail([m.email], `Nouvelle tâche assignée : ${t.title}`,
-        `<p>Bonjour ${m.name},</p><p>La tâche <strong>${t.title}</strong>${project ? ` (projet ${project.name})` : ''} vous a été assignée.</p>${t.deadline ? `<p>Échéance : ${fmtDateLong(t.deadline)}</p>` : ''}`);
+        `<p>Bonjour ${escapeHtml(m.name)},</p><p>La tâche <strong>${escapeHtml(t.title)}</strong>${project ? ` (projet ${escapeHtml(project.name)})` : ''} vous a été assignée.</p>${t.deadline ? `<p>Échéance : ${fmtDateLong(t.deadline)}</p>` : ''}`);
     });
   };
 
@@ -3302,8 +3330,14 @@ function ReferentApp({ session, onSignOut }) {
         const weekEnd = addDays(weekStart, 6);
         return tasks.filter(x => x.assigneeId === id && x.status !== 'termine' && x.deadline >= weekStart && x.deadline <= weekEnd).length;
       });
+      // La répartition de charge ne doit jamais reproposer la même personne
+      // qu'avant (déjà écartée de la position 0 par l'échange anti-répétition
+      // ci-dessus) : on l'exclut du choix par charge, sauf si elle est
+      // vraiment la seule option restante dans le sac.
+      const candidateIdx = pool.map((_, i) => i).filter(i => pool[i] !== t.assigneeId);
+      const searchIn = candidateIdx.length > 0 ? candidateIdx : pool.map((_, i) => i);
       let bestLoad = Infinity;
-      pool.forEach((id, i) => { const l = load(id); if (l < bestLoad) { bestLoad = l; pickIdx = i; } });
+      searchIn.forEach(i => { const l = load(pool[i]); if (l < bestLoad) { bestLoad = l; pickIdx = i; } });
     }
     const assigneeId = pool[pickIdx];
     const rest = [...pool.slice(0, pickIdx), ...pool.slice(pickIdx + 1)];
@@ -3457,8 +3491,14 @@ function ReferentApp({ session, onSignOut }) {
       const newTeam = projectObj.teamIds || [];
       const teamChanged = oldTeam.length !== newTeam.length || oldTeam.some(id => !newTeam.includes(id));
       const oldResponsibleIds = prevProject.responsibleIds || [];
-      const newResponsibleId = (projectObj.responsibleIds || [])[0] || '';
-      const responsibleChanged = (oldResponsibleIds[0] || '') !== newResponsibleId;
+      const newResponsibleIdsArr = projectObj.responsibleIds || [];
+      const newResponsibleId = newResponsibleIdsArr[0] || '';
+      // Comparaison par ensemble, pas par ordre : décocher puis recocher un
+      // responsable (ou cocher un second responsable) rallonge le tableau
+      // sans changer qui est réellement responsable — comparer juste [0]
+      // aurait alors ré-assigné à tort les tâches de l'ancien responsable.
+      const responsibleChanged = oldResponsibleIds.length !== newResponsibleIdsArr.length ||
+        oldResponsibleIds.some(id => !newResponsibleIdsArr.includes(id));
       if (teamChanged || responsibleChanged) {
         const affected = tasks.filter(t => t.projectId === projectObj.id);
         const updated = [];
@@ -3528,7 +3568,7 @@ function ReferentApp({ session, onSignOut }) {
       newResponsibleIds.filter(id => !(projectObj.responsibleIds || []).includes(id)).forEach(id => {
         const rm = members.find(x => x.id === id);
         if (rm?.email) notifyByEmail([rm.email], `Vous êtes responsable du projet « ${newProject.name} »`,
-          `<p>Bonjour ${rm.name},</p><p>Vous êtes désormais responsable du projet <strong>${newProject.name}</strong> pour ce cycle (${fmtDateLong(newProject.startDate)} → ${fmtDateLong(newProject.endDate)}).</p>`);
+          `<p>Bonjour ${escapeHtml(rm.name)},</p><p>Vous êtes désormais responsable du projet <strong>${escapeHtml(newProject.name)}</strong> pour ce cycle (${fmtDateLong(newProject.startDate)} → ${fmtDateLong(newProject.endDate)}).</p>`);
       });
 
       const oldTasks = tasks.filter(t => t.projectId === projectObj.id);
@@ -3595,10 +3635,10 @@ function ReferentApp({ session, onSignOut }) {
     setProjectModal({ project: clone });
   };
 
-  const saveAppt = (a) => {
+  const saveAppt = async (a) => {
     const exists = appointments.some(x => x.id === a.id);
     setAppointments(prev => exists ? prev.map(x => x.id === a.id ? a : x) : [...prev, a]);
-    upsertRow('appointments', a);
+    warnIfFailed(await upsertRow('appointments', a), 'Le rendez-vous');
     setApptModal(null);
   };
   const deleteAppt = async (id) => {
@@ -3620,13 +3660,13 @@ function ReferentApp({ session, onSignOut }) {
     if (affectedAppts.length) {
       const updated = affectedAppts.map(a => ({ ...a, externalParticipants: (a.externalParticipants || []).filter(p => p !== id) }));
       setAppointments(prev => prev.map(a => updated.find(u => u.id === a.id) || a));
-      upsertRows('appointments', updated);
+      warnIfFailed(await upsertRows('appointments', updated), 'La mise à jour des rendez-vous liés');
     }
     setContactModal(null);
   };
 
-  const saveRequest = (r) => { setTaskRequests(prev => [...prev, r]); upsertRow('taskRequests', r); setRequestModal(null); };
-  const approveRequest = (id) => {
+  const saveRequest = async (r) => { setTaskRequests(prev => [...prev, r]); warnIfFailed(await upsertRow('taskRequests', r), 'La demande'); setRequestModal(null); };
+  const approveRequest = async (id) => {
     const req = taskRequests.find(r => r.id === id); if (!req) return;
     if (req.kind === 'rendez_vous') {
       const newAppt = {
@@ -3636,7 +3676,7 @@ function ReferentApp({ session, onSignOut }) {
         notes: req.description || '',
       };
       setAppointments(prev => [...prev, newAppt]);
-      upsertRow('appointments', newAppt);
+      warnIfFailed(await upsertRow('appointments', newAppt), 'Le rendez-vous');
     } else {
       const newTask = {
         id: uid(), title: req.title, description: req.description, projectId: req.projectId || '',
@@ -3645,17 +3685,17 @@ function ReferentApp({ session, onSignOut }) {
         startDate: '', deadline: req.deadline, createdAt: todayISO(), repeatUnit: 'aucune', repeatEvery: 1,
       };
       setTasks(prev => [...prev, newTask]);
-      upsertRow('tasks', newTask);
+      warnIfFailed(await upsertRow('tasks', newTask), 'La tâche');
     }
     const updatedReq = { ...req, status: 'approuvee' };
     setTaskRequests(prev => prev.map(r => r.id === id ? updatedReq : r));
-    upsertRow('taskRequests', updatedReq);
+    warnIfFailed(await upsertRow('taskRequests', updatedReq), 'La demande');
   };
-  const rejectRequest = (id, comment) => {
+  const rejectRequest = async (id, comment) => {
     const req = taskRequests.find(r => r.id === id); if (!req) return;
     const updated = { ...req, status: 'refusee', comment };
     setTaskRequests(prev => prev.map(r => r.id === id ? updated : r));
-    upsertRow('taskRequests', updated);
+    warnIfFailed(await upsertRow('taskRequests', updated), 'La demande');
   };
 
   const notifications = useMemo(() => {

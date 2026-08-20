@@ -2,6 +2,14 @@ import { supabaseAdmin } from './_supabaseAdmin.js';
 import { sendEmail } from './_resend.js';
 import { requireCron } from './_cron.js';
 
+// Noms de projet et de collaborateur sont saisis par les utilisateurs et
+// finissent tels quels dans du HTML envoyé par email — échapper avant
+// interpolation évite qu'un nom contenant "<" ou "&" casse le mail, ou
+// qu'un contenu malveillant s'affiche/s'exécute chez le destinataire.
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 // Le jour ouvré précédant une date donnée (weekend exclu) — pour le rappel
 // de démarrage de projet, qui doit tomber sur un jour où le digest part.
 function prevBusinessDay(dateStr) {
@@ -50,7 +58,7 @@ export default async function handler(req, res) {
 
     if (managerEmails.length) {
       const plural = lateProjects.length > 1;
-      const items = lateProjects.map((p) => `<li><strong>${p.name}</strong> — fin prévue le ${p.end_date}</li>`).join('');
+      const items = lateProjects.map((p) => `<li><strong>${escapeHtml(p.name)}</strong> — fin prévue le ${p.end_date}</li>`).join('');
       const html = `<p>${lateProjects.length} projet${plural ? 's ont dépassé' : ' a dépassé'} sa date de fin sans être marqué${plural ? 's' : ''} "Terminé" :</p><ul>${items}</ul>`;
       try {
         await sendEmail({ to: managerEmails, subject: `${lateProjects.length} projet${plural ? 's' : ''} en retard`, html });
@@ -87,7 +95,7 @@ export default async function handler(req, res) {
               id: crypto.randomUUID(),
               recipient_email: rm.email,
               subject: `Le projet « ${p.name} » démarre demain`,
-              html: `<p>Bonjour ${rm.name},</p><p>Le projet <strong>${p.name}</strong>, dont vous êtes responsable, démarre le ${p.start_date}.</p>`,
+              html: `<p>Bonjour ${escapeHtml(rm.name)},</p><p>Le projet <strong>${escapeHtml(p.name)}</strong>, dont vous êtes responsable, démarre le ${p.start_date}.</p>`,
             });
           }
         });
@@ -125,7 +133,7 @@ export default async function handler(req, res) {
               id: crypto.randomUUID(),
               recipient_email: rm.email,
               subject: `Le projet « ${p.name} » se termine aujourd'hui`,
-              html: `<p>Bonjour ${rm.name},</p><p>Le projet <strong>${p.name}</strong>, dont vous êtes responsable, arrive à échéance aujourd'hui (${p.end_date}). S'il est terminé, pensez à le marquer "Terminé".</p>`,
+              html: `<p>Bonjour ${escapeHtml(rm.name)},</p><p>Le projet <strong>${escapeHtml(p.name)}</strong>, dont vous êtes responsable, arrive à échéance aujourd'hui (${p.end_date}). S'il est terminé, pensez à le marquer "Terminé".</p>`,
             });
           }
         });

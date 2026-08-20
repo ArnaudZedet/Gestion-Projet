@@ -3607,10 +3607,10 @@ function ReferentApp({ session, onSignOut }) {
     setApptModal(null);
   };
 
-  const saveContact = (c) => {
+  const saveContact = async (c) => {
     const exists = externalContacts.some(x => x.id === c.id);
     setExternalContacts(prev => exists ? prev.map(x => x.id === c.id ? c : x) : [...prev, c]);
-    upsertRow('externalContacts', c);
+    warnIfFailed(await upsertRow('externalContacts', c), 'Le contact externe');
     setContactModal(null);
   };
   const deleteContact = async (id) => {

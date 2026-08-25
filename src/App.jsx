@@ -4,7 +4,7 @@ import {
   LayoutDashboard, ListChecks, Users, CalendarDays, Bell,
   Plus, X, Pencil, Trash2, AlertTriangle, CheckCircle2, Clock3,
   Search, Loader2, Inbox, GanttChartSquare, MapPin, Lock, Target, Repeat,
-  ClipboardList, Send, XCircle, Building2, Mail, Check,
+  ClipboardList, Send, XCircle, Building2, Mail, Phone, Check,
   Flag, PlayCircle, ShieldAlert, GraduationCap, Milestone as MilestoneIcon, Megaphone, ClipboardCheck,
   ChevronLeft, ChevronRight, ChevronDown, FolderPlus, List as ListIcon, Download, Copy, Upload, MessageSquare, Network, MessageCircle
 } from 'lucide-react';
@@ -190,6 +190,10 @@ const dayDiff = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + '
 
 const fmtDate = (iso) => { if (!iso) return '—'; const d = new Date(iso + 'T00:00:00'); return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }); };
 const fmtDateLong = (iso) => { if (!iso) return '—'; const d = new Date(iso + 'T00:00:00'); return d.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' }); };
+// Regroupe les chiffres deux par deux avec un point ("0612345678" →
+// "06.12.34.56.78") pour une lecture plus facile, quelle que soit la façon
+// dont le numéro a été saisi (espaces, tirets...).
+const fmtPhone = (p) => { if (!p) return ''; const digits = String(p).replace(/\D/g, ''); return digits.match(/.{1,2}/g)?.join('.') || p; };
 
 const REPEAT_UNITS = [
   { id: 'aucune',  label: 'Ne se répète pas' },
@@ -2051,7 +2055,12 @@ function ContactsView({ contacts, perm, editContact, newContact }) {
               </div>
               {perm.canManageContacts && <button onClick={() => editContact(c)} className="text-slate-300 hover:text-slate-500 p-1"><Pencil size={14} /></button>}
             </div>
-            {c.email && <div className="text-xs text-slate-400 mt-3 pt-3 border-t border-slate-50 flex items-center gap-1"><Mail size={11} />{c.email}</div>}
+            {(c.email || c.phone) && (
+              <div className="mt-3 pt-3 border-t border-slate-50 flex flex-col gap-1">
+                {c.email && <div className="text-xs text-slate-400 flex items-center gap-1"><Mail size={11} />{c.email}</div>}
+                {c.phone && <div className="text-xs text-slate-400 flex items-center gap-1"><Phone size={11} />{fmtPhone(c.phone)}</div>}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -2626,7 +2635,7 @@ function OrgPersonChip({ assignment, person, canEdit, nodes, showFunction, tint,
         )}
       </div>
       {person.email && <div className="text-[11px] text-slate-700 font-medium truncate">{person.email}</div>}
-      {external && person.phone && <div className="text-[11px] text-slate-700 font-medium truncate">{person.phone}</div>}
+      {external && person.phone && <div className="text-[11px] text-slate-700 font-medium truncate">{fmtPhone(person.phone)}</div>}
       {showFunction && person.role && (
         <div className="text-[10px] text-slate-400 mt-0.5">{person.role}</div>
       )}

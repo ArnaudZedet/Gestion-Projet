@@ -2625,8 +2625,8 @@ function OrgPersonChip({ assignment, person, canEdit, nodes, showFunction, tint,
           </div>
         )}
       </div>
-      {person.email && <div className="text-[10px] text-slate-400 truncate">{person.email}</div>}
-      {external && person.phone && <div className="text-[10px] text-slate-400 truncate">{person.phone}</div>}
+      {person.email && <div className="text-[11px] text-slate-700 font-medium truncate">{person.email}</div>}
+      {external && person.phone && <div className="text-[11px] text-slate-700 font-medium truncate">{person.phone}</div>}
       {showFunction && person.role && (
         <div className="text-[10px] text-slate-400 mt-0.5">{person.role}</div>
       )}

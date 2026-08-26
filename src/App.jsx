@@ -3022,11 +3022,6 @@ function ReferentApp({ session, onSignOut }) {
   const [contactModal, setContactModal] = useState(null);
   const [requestModal, setRequestModal] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
-  // Bandeau ponctuel d'annonce (cahier de transmission + organigramme) —
-  // à retirer une fois l'annonce envoyée à tout le monde, ce n'est pas un
-  // outil de diffusion permanent.
-  const [announceSent, setAnnounceSent] = useState(() => localStorage.getItem('announce_v1_sent') === '1');
-  const [announcing, setAnnouncing] = useState(false);
   const [hoveredNav, setHoveredNav] = useState('');
   const [transmissionsLastSeen, setTransmissionsLastSeen] = useState('');
   const [toasts, setToasts] = useState([]);
@@ -3189,46 +3184,6 @@ function ReferentApp({ session, onSignOut }) {
       });
       return res.ok;
     } catch { return false; }
-  };
-
-  // Annonce ponctuelle à tout le personnel (cahier de transmission virtuel +
-  // organigramme) — déclenchée à la main par un manager depuis le tableau de
-  // bord, une seule fois (voir announceSent). /api/send-email plafonne à 20
-  // destinataires par appel, d'où l'envoi par lots.
-  const sendAnnouncement = async () => {
-    setAnnouncing(true);
-    const recipients = members.filter(m => m.email).map(m => m.email);
-    const subject = "Nouveau dans l'application : cahier de transmission et organigramme";
-    const html = `
-      <p>Bonjour,</p>
-      <p>Deux nouveaux outils viennent d'être ajoutés à l'application de gestion des tâches et projets :</p>
-      <ul>
-        <li><strong>Un cahier de transmission virtuel</strong>, par service et par métier (Secrétaires et Manipulateurs, pour Radio/Scanner/IRM) : chacun peut y laisser un message pour les collègues concernés, avec une notification par email dès qu'un nouveau message est posté.</li>
-        <li><strong>Un organigramme</strong>, pour retrouver rapidement qui contacter dans chaque service, avec les emails et numéros de téléphone directement visibles.</li>
-      </ul>
-      <p>Les deux se trouvent dans le menu de gauche de l'application, rubriques "Transmissions" et "Organigramme".</p>
-    `;
-    const chunkSize = 20;
-    let allOk = true;
-    for (let i = 0; i < recipients.length; i += chunkSize) {
-      const chunk = recipients.slice(i, i + chunkSize);
-      try {
-        const res = await fetch('/api/send-email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ to: chunk, subject, html }),
-        });
-        if (!res.ok) allOk = false;
-      } catch { allOk = false; }
-    }
-    setAnnouncing(false);
-    if (allOk) {
-      localStorage.setItem('announce_v1_sent', '1');
-      setAnnounceSent(true);
-      showToast('Annonce envoyée à tout le personnel.', 'success');
-    } else {
-      showToast("L'annonce n'a peut-être pas pu être envoyée à tout le monde (problème de connexion). Vous pouvez réessayer.");
-    }
   };
 
   // Transmissions : un canal par service × métier (Secrétaires/Manipulateurs
@@ -3867,17 +3822,6 @@ function ReferentApp({ session, onSignOut }) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-6">
-          {view === 'dashboard' && perm.isManager && !announceSent && (
-            <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 mb-4 flex items-center justify-between gap-3 flex-wrap">
-              <div className="text-sm text-blue-800">
-                Prévenir tout le personnel par email de l'arrivée du cahier de transmission virtuel et de l'organigramme ?
-              </div>
-              <button onClick={sendAnnouncement} disabled={announcing}
-                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium px-3 py-1.5 rounded-lg shrink-0">
-                {announcing ? 'Envoi…' : "Envoyer l'annonce à tout le personnel"}
-              </button>
-            </div>
-          )}
           {view === 'dashboard' && <Dashboard tasks={tasks} members={members} projects={projects} appointments={appointments} connectedAs={connectedAs} openTask={(t) => setTaskModal({ task: t })} onClaim={claimTask} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'tasks' && <TasksView tasks={scopedTasks} members={members} projects={scopedProjects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={(projectId) => setTaskModal({ task: null, presetProjectId: projectId })} newProject={() => setProjectModal({ project: null })} editProject={(p) => setProjectModal({ project: p })} />}
           {view === 'planning' && <PlanningView members={members} tasks={scopedTasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}

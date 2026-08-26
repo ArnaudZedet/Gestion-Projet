@@ -2521,7 +2521,7 @@ function PrioritisationView({ projects, members, onOpenProject }) {
 /*  Transmissions                                                         */
 /* ---------------------------------------------------------------------- */
 
-function TransmissionsView({ transmissions, members, currentMemberId, onPost }) {
+function TransmissionsView({ transmissions, members, currentMemberId, lastSeen, onPost }) {
   const channels = [
     ...SERVICES.map(s => ({ service: s, functionGroup: 'Secrétaire', label: `Secrétaires ${s}` })),
     ...SERVICES.map(s => ({ service: s, functionGroup: 'Manipulateur', label: `Manipulateurs ${s}` })),
@@ -2546,7 +2546,11 @@ function TransmissionsView({ transmissions, members, currentMemberId, onPost }) 
         {channels.map(c => {
           const active = selected.service === c.service && selected.functionGroup === c.functionGroup;
           const color = SERVICE_COLORS[c.service] || '#64748B';
-          const count = transmissions.filter(t => t.service === c.service && t.functionGroup === c.functionGroup).length;
+          // Nombre de messages non lus (depuis la dernière ouverture de
+          // l'onglet), pas le total depuis toujours — sinon ce chiffre ne
+          // redescend jamais à zéro une fois qu'un canal a reçu un message.
+          const count = transmissions.filter(t => t.service === c.service && t.functionGroup === c.functionGroup &&
+            t.authorId !== currentMemberId && (!lastSeen || t.createdAt > lastSeen)).length;
           return (
             <button key={`${c.functionGroup}-${c.service}`} onClick={() => setSelected(c)}
               className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm border font-medium"
@@ -3189,9 +3193,13 @@ function ReferentApp({ session, onSignOut }) {
     const t = { id: uid(), service, functionGroup, authorId: connectedAs, message, createdAt: new Date().toISOString() };
     setTransmissions(prev => [...prev, t]);
     warnIfFailed(await upsertRow('transmissions', t), 'Le message');
-    const recipients = members.filter(m => m.id !== connectedAs && (m.services || []).includes(service) &&
-      (m.role === functionGroup || (functionGroup === 'Manipulateur' && m.role === 'Aide manipulateur')) && m.email)
-      .map(m => m.email);
+    // Les managers reçoivent systématiquement le mail, en plus des membres du
+    // canal concerné, pour pouvoir surveiller les transmissions même s'ils ne
+    // font partie d'aucun service/métier qui matche ce canal.
+    const channelMembers = members.filter(m => m.id !== connectedAs && (m.services || []).includes(service) &&
+      (m.role === functionGroup || (functionGroup === 'Manipulateur' && m.role === 'Aide manipulateur')) && m.email);
+    const managerMembers = members.filter(m => m.id !== connectedAs && m.accessLevel === 'manager' && m.email);
+    const recipients = [...new Set([...channelMembers, ...managerMembers].map(m => m.email))];
     if (recipients.length) {
       const channelLabel = `${functionGroup === 'Secrétaire' ? 'Secrétaires' : 'Manipulateurs'} ${service}`;
       notifyByEmail(recipients, `Nouvelle transmission — ${channelLabel}`,
@@ -3816,7 +3824,7 @@ function ReferentApp({ session, onSignOut }) {
           {view === 'dashboard' && <Dashboard tasks={tasks} members={members} projects={projects} appointments={appointments} connectedAs={connectedAs} openTask={(t) => setTaskModal({ task: t })} onClaim={claimTask} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'tasks' && <TasksView tasks={scopedTasks} members={members} projects={scopedProjects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={(projectId) => setTaskModal({ task: null, presetProjectId: projectId })} newProject={() => setProjectModal({ project: null })} editProject={(p) => setProjectModal({ project: p })} />}
           {view === 'planning' && <PlanningView members={members} tasks={scopedTasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
-          {view === 'transmissions' && <TransmissionsView transmissions={transmissions} members={members} currentMemberId={connectedAs} onPost={postTransmission} />}
+          {view === 'transmissions' && <TransmissionsView transmissions={transmissions} members={members} currentMemberId={connectedAs} lastSeen={transmissionsLastSeen} onPost={postTransmission} />}
           {view === 'gantt' && <GanttView tasks={scopedTasks} members={members} projects={scopedProjects} openTask={(t) => setTaskModal({ task: t })} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'priorisation' && <PrioritisationView projects={scopedProjects} members={members} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} onImport={importMembers} />}

@@ -141,11 +141,11 @@ Deux fonctionnalités serveur ont été ajoutées :
   tirage par rotation). Pour ne pas surcharger les boîtes mail, ces
   notifications ne partent pas une par une : elles s'accumulent dans une
   file d'attente et sont envoyées groupées, en un seul email par personne,
-  chaque jour vers 13h (heure de Paris). Les simples changements de
+  chaque jour vers 7h (heure de Paris). Les simples changements de
   date/statut d'un projet ne déclenchent volontairement rien.
 - **Alertes manager** : un email quand un projet dépasse sa date de fin sans
   être marqué "Terminé" (une seule fois par projet, envoyé avec le
-  récapitulatif quotidien de 13h), et un récapitulatif hebdomadaire des
+  récapitulatif quotidien de 7h), et un récapitulatif hebdomadaire des
   projets en cours chaque lundi matin. Tout ça tourne sur une horloge (voir
   étape 5 ci-dessous), indépendamment de toute action dans l'app.
 

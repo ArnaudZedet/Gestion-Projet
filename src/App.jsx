@@ -3160,13 +3160,13 @@ function ReferentApp({ session, onSignOut }) {
   // email par destinataire, envoyé une fois par jour (cron, voir
   // api/cron-daily.js) — pour ne pas polluer les boîtes mail à chaque
   // affectation/rotation.
-  const notifyByEmail = (to, subject, html) => {
+  const notifyByEmail = async (to, subject, html) => {
     const recipients = (to || []).filter(Boolean);
-    if (!recipients.length) return;
+    if (!recipients.length) return true;
     const rows = recipients.map(email => ({ id: uid(), recipient_email: email, subject, html }));
-    supabase.from('notification_queue').insert(rows).then(({ error }) => {
-      if (error) console.error('Notification en attente non enregistrée', error);
-    });
+    const { error } = await supabase.from('notification_queue').insert(rows);
+    if (error) { console.error('Notification en attente non enregistrée', error); return false; }
+    return true;
   };
 
   const sendFeedback = async (message) => {
@@ -3202,8 +3202,9 @@ function ReferentApp({ session, onSignOut }) {
     const recipients = [...new Set([...channelMembers, ...managerMembers].map(m => m.email))];
     if (recipients.length) {
       const channelLabel = `${functionGroup === 'Secrétaire' ? 'Secrétaires' : 'Manipulateurs'} ${service}`;
-      notifyByEmail(recipients, `Nouvelle transmission — ${channelLabel}`,
+      const queued = await notifyByEmail(recipients, `Nouvelle transmission — ${channelLabel}`,
         `<p><strong>${escapeHtml(currentMember?.name || 'Quelqu\'un')}</strong> a laissé un message dans la transmission <strong>${escapeHtml(channelLabel)}</strong> :</p><p>${escapeHtml(message).replace(/\n/g, '<br/>')}</p>`);
+      warnIfFailed(queued, "La notification par email de ce message");
     }
   };
 

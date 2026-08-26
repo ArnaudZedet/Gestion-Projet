@@ -39,7 +39,7 @@ function prevBusinessDay(dateStr) {
   return d.toISOString().slice(0, 10);
 }
 
-// Tourne une fois par jour à 13h heure de Paris (voir vercel.json — l'heure
+// Tourne une fois par jour à 7h heure de Paris (voir vercel.json — l'heure
 // UTC choisie tient compte du changement heure été/hiver à ±1h près).
 // Fait quatre choses, regroupées dans le même cron pour rester dans la
 // limite de 2 tâches planifiées du plan Vercel Hobby :

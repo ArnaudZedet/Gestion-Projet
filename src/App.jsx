@@ -544,7 +544,7 @@ function Avatar({ name, size = 32 }) {
   );
 }
 
-function DeadlineBadge({ deadline, status }) {
+function DeadlineBadge({ startDate, deadline, status }) {
   if (!deadline) return <span className="text-xs text-slate-400">Sans échéance</span>;
   const d = daysBetween(deadline);
   const done = status === 'termine';
@@ -552,7 +552,12 @@ function DeadlineBadge({ deadline, status }) {
   if (!done && d < 0) { cls = 'text-red-600 font-semibold'; label = `${fmtDate(deadline)} · retard ${Math.abs(d)}j`; }
   else if (!done && d === 0) { cls = 'text-amber-600 font-semibold'; label = "Aujourd'hui"; }
   else if (!done && d <= 3) { cls = 'text-amber-600'; label = `${fmtDate(deadline)} · J-${d}`; }
-  return <span className={`text-xs ${cls}`}>{label}</span>;
+  return (
+    <span className="text-xs">
+      {startDate && <span className="text-slate-400">{fmtDate(startDate)} → </span>}
+      <span className={cls}>{label}</span>
+    </span>
+  );
 }
 
 function EmptyState({ icon: Icon, title, subtitle }) {
@@ -1862,7 +1867,7 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
         </td>
         <td className="px-4 py-2.5"><ScopeTag id={t.scope} /></td>
         <td className="px-4 py-2.5"><StatusTag id={t.status} /></td>
-        <td className="px-4 py-2.5"><DeadlineBadge deadline={t.deadline} status={t.status} /></td>
+        <td className="px-4 py-2.5"><DeadlineBadge startDate={t.startDate} deadline={t.deadline} status={t.status} /></td>
       </tr>
     );
   };

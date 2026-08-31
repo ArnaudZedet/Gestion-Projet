@@ -3126,12 +3126,16 @@ function ReferentApp({ session, onSignOut }) {
 
   // Petit badge sur l'onglet Transmissions : nombre de messages postés par
   // d'autres depuis la dernière visite de cet onglet (mémorisé localement).
+  // La remise à zéro se fait en QUITTANT l'onglet, pas en y entrant : sinon
+  // le chiffre par canal (dans TransmissionsView) retombe à zéro avant même
+  // que la personne ait pu voir quel canal était concerné.
   useEffect(() => {
-    if (view === 'transmissions' && connectedAs) {
+    if (view !== 'transmissions' || !connectedAs) return;
+    return () => {
       const now = new Date().toISOString();
       localStorage.setItem(`transmissions_last_seen_${connectedAs}`, now);
       setTransmissionsLastSeen(now);
-    }
+    };
   }, [view, connectedAs]);
   const unreadTransmissions = transmissions.filter(t => t.authorId !== connectedAs && (!transmissionsLastSeen || t.createdAt > transmissionsLastSeen)).length;
 

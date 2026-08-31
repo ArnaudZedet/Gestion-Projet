@@ -3441,6 +3441,21 @@ function ReferentApp({ session, onSignOut }) {
     warnIfFailed(await upsertRow('tasks', t), 'La tâche');
     notifyTaskAssignment(existing, t);
     const ownerProject = projects.find(p => p.id === t.projectId);
+    // Si cette tâche termine la dernière encore ouverte du projet, le projet
+    // passe automatiquement "Terminé" à son tour — ça déclenche au passage
+    // sa propre répétition si elle en a une (voir saveProject). Le rappel du
+    // dernier jour reste utile pour les projets sans tâches, ou dont toutes
+    // les tâches ne se terminent jamais en même temps.
+    if (justCompleted && ownerProject && ownerProject.status !== 'termine') {
+      const projectTasks = tasks.filter(x => x.projectId === t.projectId);
+      // `tasks` (l'état avant cette mise à jour) contient encore l'ancienne
+      // version de la tâche qu'on vient de sauver — on la traite comme
+      // terminée (elle l'est, justCompleted le garantit) plutôt que de se
+      // fier à son statut pas encore rafraîchi dans ce tableau.
+      if (projectTasks.length > 0 && projectTasks.every(x => x.id === t.id || x.status === 'termine')) {
+        saveProject({ ...ownerProject, status: 'termine' });
+      }
+    }
     const projectOwnsRepeat = ownerProject?.repeatUnit && ownerProject.repeatUnit !== 'aucune';
     if (justCompleted && !projectOwnsRepeat && t.repeatUnit && t.repeatUnit !== 'aucune') {
       let nextStart = shiftByRepeat(t.startDate, t.repeatUnit, t.repeatEvery);

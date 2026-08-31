@@ -297,8 +297,8 @@ const ROW_MAPPERS = {
   },
   projects: {
     table: 'projects',
-    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, service: p.service || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', priority: p.priority || 'normale', importance: p.importance || 'moyenne', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null, start_reminder_sent: !!p.startReminderSent, end_reminder_sent: !!p.endReminderSent, responsible_ids: p.responsibleIds || [], rotate_responsible: !!p.rotateResponsible, responsible_rotation_pool: p.responsibleRotationPool || [], pending_approval: !!p.pendingApproval, created_by: p.createdBy || null }),
-    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', service: r.service || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', priority: r.priority || 'normale', importance: r.importance || 'moyenne', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null, startReminderSent: !!r.start_reminder_sent, endReminderSent: !!r.end_reminder_sent, responsibleIds: (r.responsible_ids && r.responsible_ids.length ? r.responsible_ids : (r.responsible_id ? [r.responsible_id] : [])), rotateResponsible: !!r.rotate_responsible, responsibleRotationPool: r.responsible_rotation_pool || [], pendingApproval: !!r.pending_approval, createdBy: r.created_by || '' }),
+    toRow: (p) => ({ id: p.id, name: p.name, description: p.description || null, color: p.color || null, service: p.service || null, team_ids: p.teamIds || [], external_ids: p.externalIds || [], start_date: d(p.startDate), end_date: d(p.endDate), status: p.status || 'en_cours', priority: p.priority || 'normale', importance: p.importance || 'moyenne', repeat_unit: p.repeatUnit || 'aucune', repeat_every: p.repeatEvery || 1, late_notified_at: p.lateNotifiedAt || null, start_reminder_sent: !!p.startReminderSent, end_reminder_sent: !!p.endReminderSent, responsible_ids: p.responsibleIds || [], rotate_responsible: !!p.rotateResponsible, rotate_responsible_count: p.rotateResponsibleCount || 1, responsible_rotation_pool: p.responsibleRotationPool || [], pending_approval: !!p.pendingApproval, created_by: p.createdBy || null }),
+    fromRow: (r) => ({ id: r.id, name: r.name, description: r.description || '', color: r.color || '', service: r.service || '', teamIds: r.team_ids || [], externalIds: r.external_ids || [], startDate: r.start_date || '', endDate: r.end_date || '', status: r.status || 'en_cours', priority: r.priority || 'normale', importance: r.importance || 'moyenne', repeatUnit: r.repeat_unit || 'aucune', repeatEvery: r.repeat_every || 1, lateNotifiedAt: r.late_notified_at || null, startReminderSent: !!r.start_reminder_sent, endReminderSent: !!r.end_reminder_sent, responsibleIds: (r.responsible_ids && r.responsible_ids.length ? r.responsible_ids : (r.responsible_id ? [r.responsible_id] : [])), rotateResponsible: !!r.rotate_responsible, rotateResponsibleCount: r.rotate_responsible_count || 1, responsibleRotationPool: r.responsible_rotation_pool || [], pendingApproval: !!r.pending_approval, createdBy: r.created_by || '' }),
   },
   tasks: {
     table: 'tasks',
@@ -1096,7 +1096,14 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 function ProjectModal({ project, members, externalContacts, tasks, projects, currentMemberId, perm, onSave, onDelete, onDuplicate, onClose }) {
   const isNew = !project;
   const locked = !canEditProject(project, currentMemberId, perm.isManager);
-  const [form, setForm] = useState(project || { name: '', description: '', service: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', priority: 'normale', importance: 'moyenne', repeatUnit: 'aucune', repeatEvery: 1, responsibleIds: [], rotateResponsible: false, responsibleRotationPool: [] });
+  const [form, setForm] = useState(project || { name: '', description: '', service: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', priority: 'normale', importance: 'moyenne', repeatUnit: 'aucune', repeatEvery: 1, responsibleIds: [], rotateResponsible: false, rotateResponsibleCount: 1, responsibleRotationPool: [] });
+  // Seules les personnes réellement tirables au sort comptent pour le
+  // plafond du nombre de responsables tournants (les managers/toujours-
+  // approbateurs de l'équipe ne sont jamais piochés, voir nextRotatedAssignee).
+  const eligibleRotationCount = form.teamIds.filter(id => {
+    const m = members.find(x => x.id === id);
+    return !(m?.alwaysApprover || m?.role === 'Manager');
+  }).length;
   const toggleResponsible = (id) => setForm(f => ({ ...f, responsibleIds: (f.responsibleIds || []).includes(id) ? f.responsibleIds.filter(x => x !== id) : [...(f.responsibleIds || []), id] }));
   const [genGovernance, setGenGovernance] = useState(false);
   // Retirer quelqu'un de l'équipe le retire aussi du poste de responsable
@@ -1147,20 +1154,19 @@ function ProjectModal({ project, members, externalContacts, tasks, projects, cur
       // brute — piocher quand même violerait la règle d'exclusion appliquée
       // partout ailleurs (voir nextRotatedAssignee).
       if (eligible.length > 0) {
+        const count = Math.max(1, Math.min(projectObj.rotateResponsibleCount || 1, eligible.length));
         let pool = shuffleArray(eligible);
-        // Comme au renouvellement : parmi les candidats, on prend celui qui a
-        // le moins de projets déjà en cours sur la même période — sinon deux
-        // projets créés séparément (pas le même cycle) peuvent tomber tous
-        // les deux sur la même personne par pur hasard.
+        // Comme au renouvellement : parmi les candidats, on privilégie ceux
+        // qui ont le moins de projets déjà en cours sur la même période —
+        // sinon deux projets créés séparément (pas le même cycle) peuvent
+        // tomber tous les deux sur la même personne par pur hasard.
         if (projectObj.startDate && projectObj.endDate && projects && pool.length > 1) {
           const loadOf = (id) => projects.filter(p => (p.responsibleIds || []).includes(id) && p.status !== 'termine' &&
             p.startDate && p.endDate && p.startDate <= projectObj.endDate && p.endDate >= projectObj.startDate).length;
-          let bestIdx = 0, bestLoad = Infinity;
-          pool.forEach((id, i) => { const l = loadOf(id); if (l < bestLoad) { bestLoad = l; bestIdx = i; } });
-          if (bestIdx > 0) pool = [pool[bestIdx], ...pool.slice(0, bestIdx), ...pool.slice(bestIdx + 1)];
+          pool = [...pool].sort((a, b) => loadOf(a) - loadOf(b));
         }
-        projectObj.responsibleIds = [pool[0]];
-        projectObj.responsibleRotationPool = pool.slice(1);
+        projectObj.responsibleIds = pool.slice(0, count);
+        projectObj.responsibleRotationPool = pool.slice(count);
       }
     }
     // Les étapes générées automatiquement suivent le responsable du projet
@@ -1303,10 +1309,22 @@ function ProjectModal({ project, members, externalContacts, tasks, projects, cur
           {form.teamIds.length === 0 && <span className="text-xs text-slate-400">Ajoutez d'abord des personnes à l'équipe affectée.</span>}
         </div>
         {form.repeatUnit && form.repeatUnit !== 'aucune' && form.teamIds.length > 0 && (
-          <label className="flex items-center gap-2 text-xs text-slate-600 mt-2.5">
-            <input disabled={locked} type="checkbox" checked={!!form.rotateResponsible} onChange={e => setForm({ ...form, rotateResponsible: e.target.checked })} />
-            Le responsable change à chaque renouvellement (tirage aléatoire dans l'équipe, sans repasser deux fois avant que tout le monde soit passé{(form.responsibleIds || []).length > 1 ? ' — ne conservera qu\'une seule personne tirée au sort' : ''})
-          </label>
+          <div className="mt-2.5">
+            <label className="flex items-center gap-2 text-xs text-slate-600">
+              <input disabled={locked} type="checkbox" checked={!!form.rotateResponsible} onChange={e => setForm({ ...form, rotateResponsible: e.target.checked })} />
+              Le(s) responsable(s) change(nt) à chaque renouvellement (tirage aléatoire dans l'équipe, sans repasser avant que tout le monde soit passé)
+            </label>
+            {form.rotateResponsible && (
+              <label className="flex items-center gap-2 text-xs text-slate-600 mt-1.5 ml-5">
+                Nombre de responsables tournants
+                <input disabled={locked} type="number" min="1" max={Math.max(1, eligibleRotationCount)}
+                  className="w-16 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none"
+                  value={form.rotateResponsibleCount || 1}
+                  onChange={e => setForm({ ...form, rotateResponsibleCount: Math.max(1, Math.min(Math.max(1, eligibleRotationCount), parseInt(e.target.value) || 1)) })} />
+                {eligibleRotationCount === 0 && <span className="text-slate-400">(aucune personne éligible dans l'équipe)</span>}
+              </label>
+            )}
+          </div>
         )}
       </Field>
       {isNew && (
@@ -3362,6 +3380,40 @@ function ReferentApp({ session, onSignOut }) {
     return { assigneeId, rotationPool: rest };
   };
 
+  // Même principe que nextRotatedAssignee (sac tournant, priorité à la
+  // charge la plus faible), mais désigne plusieurs responsables à la fois
+  // pour un même cycle — utilisé quand un projet a besoin de N responsables
+  // tournants plutôt qu'un seul. Personne n'est repris avant que tout le
+  // monde soit passé ; si le sac se vide en cours de tirage, on repart sur
+  // les personnes pas encore prises CE tour-ci (et seulement si vraiment
+  // tout le monde a déjà été pris cette fois, on autorise un doublon —
+  // n'arrive que si le nombre demandé dépasse la taille de l'équipe).
+  const nextRotatedAssignees = (prevIds, prevPool, count, teamOverride, targetDate, loadFn) => {
+    const team = (teamOverride || []).filter(id => {
+      const m = members.find(x => x.id === id);
+      return !(m?.alwaysApprover || m?.role === 'Manager');
+    });
+    if (team.length === 0) return { assigneeIds: [], rotationPool: [] };
+    const n = Math.max(1, Math.min(count, team.length));
+    let pool = (prevPool || []).filter(id => team.includes(id));
+    const picked = [];
+    while (picked.length < n) {
+      if (pool.length === 0) pool = shuffleArray(team.filter(id => !picked.includes(id)));
+      if (pool.length === 0) pool = shuffleArray(team);
+      const candidates = pool.filter(id => !picked.includes(id));
+      if (candidates.length === 0) { pool = []; continue; }
+      let pickIdx = 0;
+      if (targetDate && candidates.length > 1 && loadFn) {
+        let bestLoad = Infinity;
+        candidates.forEach((id, i) => { const l = loadFn(id); if (l < bestLoad) { bestLoad = l; pickIdx = i; } });
+      }
+      const id = candidates[pickIdx];
+      picked.push(id);
+      pool = pool.filter(x => x !== id);
+    }
+    return { assigneeIds: picked, rotationPool: pool };
+  };
+
   // Même principe que nextRotatedAssignee, mais pour le mode Équipe (RACI) :
   // le rôle "R" (Responsable) tourne, les autres rôles (A/C/I) restent tels quels.
   const rotateRaciResponsible = (t, teamOverride, targetDate) => {
@@ -3566,18 +3618,21 @@ function ReferentApp({ session, onSignOut }) {
       let newResponsibleIds = projectObj.responsibleIds || [];
       let newResponsibleRotationPool = projectObj.responsibleRotationPool || [];
       if (projectObj.rotateResponsible && newResponsibleIds.length > 0) {
-        // La rotation ne gère qu'un seul poste tournant : s'il y avait
-        // plusieurs responsables fixes, le renouvellement n'en garde qu'un,
-        // tiré au sort (annoncé dans le libellé de la case à cocher).
-        // Parmi les personnes dont c'est le tour, on privilégie celle qui a
-        // le moins de projets déjà en cours sur la même période, pour
-        // éviter qu'une personne cumule plusieurs responsabilités de projet
-        // à la fois.
+        // Le nombre de responsables tournants est celui choisi dans le
+        // formulaire (rotateResponsibleCount) — par défaut le nombre de
+        // responsables déjà en place, pour les projets créés avant l'ajout
+        // de ce réglage. Parmi les personnes dont c'est le tour, on
+        // privilégie celles qui ont le moins de projets déjà en cours sur
+        // la même période, pour éviter qu'une personne cumule plusieurs
+        // responsabilités de projet à la fois.
         const projectLoadOf = (id) => projects.filter(p => p.id !== projectObj.id && p.status !== 'termine' &&
           (p.responsibleIds || []).includes(id) && p.startDate && p.endDate && p.startDate <= nextEnd && p.endDate >= nextStart).length;
-        const rotated = nextRotatedAssignee({ assigneeId: newResponsibleIds[0], rotationPool: projectObj.responsibleRotationPool }, projectObj.teamIds, nextStart, projectLoadOf);
-        newResponsibleIds = [rotated.assigneeId];
-        newResponsibleRotationPool = rotated.rotationPool;
+        const count = projectObj.rotateResponsibleCount || newResponsibleIds.length;
+        const rotated = nextRotatedAssignees(newResponsibleIds, projectObj.responsibleRotationPool, count, projectObj.teamIds, nextStart, projectLoadOf);
+        if (rotated.assigneeIds.length > 0) {
+          newResponsibleIds = rotated.assigneeIds;
+          newResponsibleRotationPool = rotated.rotationPool;
+        }
       }
       const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd, lateNotifiedAt: null, startReminderSent: false, endReminderSent: false, responsibleIds: newResponsibleIds, responsibleRotationPool: newResponsibleRotationPool };
       renewedProject = newProject;

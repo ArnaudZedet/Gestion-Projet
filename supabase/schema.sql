@@ -39,6 +39,7 @@ create table if not exists projects (
   end_reminder_sent boolean not null default false,
   responsible_ids jsonb not null default '[]'::jsonb,
   rotate_responsible boolean not null default false,
+  rotate_responsible_count int not null default 1,
   responsible_rotation_pool jsonb not null default '[]'::jsonb,
   pending_approval boolean not null default false,
   created_by text,

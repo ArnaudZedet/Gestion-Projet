@@ -3446,6 +3446,7 @@ function ReferentApp({ session, onSignOut }) {
     // sa propre répétition si elle en a une (voir saveProject). Le rappel du
     // dernier jour reste utile pour les projets sans tâches, ou dont toutes
     // les tâches ne se terminent jamais en même temps.
+    let inheritedRepeat = false;
     if (justCompleted && ownerProject && ownerProject.status !== 'termine') {
       const projectTasks = tasks.filter(x => x.projectId === t.projectId);
       // `tasks` (l'état avant cette mise à jour) contient encore l'ancienne
@@ -3453,10 +3454,20 @@ function ReferentApp({ session, onSignOut }) {
       // terminée (elle l'est, justCompleted le garantit) plutôt que de se
       // fier à son statut pas encore rafraîchi dans ce tableau.
       if (projectTasks.length > 0 && projectTasks.every(x => x.id === t.id || x.status === 'termine')) {
-        saveProject({ ...ownerProject, status: 'termine' });
+        // Le projet n'a pas sa propre répétition configurée : si c'est sa
+        // seule tâche et qu'elle, elle en a une, c'est cette cadence qui
+        // porte le cycle du projet — sinon le projet resterait "Terminé"
+        // pour toujours pendant que la tâche continuerait de se répéter
+        // toute seule, détachée d'un projet fermé.
+        const projectHasOwnRepeat = ownerProject.repeatUnit && ownerProject.repeatUnit !== 'aucune';
+        inheritedRepeat = !projectHasOwnRepeat && projectTasks.length === 1 && t.repeatUnit && t.repeatUnit !== 'aucune';
+        const projectToSave = inheritedRepeat
+          ? { ...ownerProject, status: 'termine', repeatUnit: t.repeatUnit, repeatEvery: t.repeatEvery }
+          : { ...ownerProject, status: 'termine' };
+        saveProject(projectToSave);
       }
     }
-    const projectOwnsRepeat = ownerProject?.repeatUnit && ownerProject.repeatUnit !== 'aucune';
+    const projectOwnsRepeat = inheritedRepeat || (ownerProject?.repeatUnit && ownerProject.repeatUnit !== 'aucune');
     if (justCompleted && !projectOwnsRepeat && t.repeatUnit && t.repeatUnit !== 'aucune') {
       let nextStart = shiftByRepeat(t.startDate, t.repeatUnit, t.repeatEvery);
       let nextDeadline = shiftByRepeat(t.deadline, t.repeatUnit, t.repeatEvery);

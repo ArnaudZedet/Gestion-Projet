@@ -3454,15 +3454,20 @@ function ReferentApp({ session, onSignOut }) {
       // terminée (elle l'est, justCompleted le garantit) plutôt que de se
       // fier à son statut pas encore rafraîchi dans ce tableau.
       if (projectTasks.length > 0 && projectTasks.every(x => x.id === t.id || x.status === 'termine')) {
-        // Le projet n'a pas sa propre répétition configurée : si c'est sa
-        // seule tâche et qu'elle, elle en a une, c'est cette cadence qui
-        // porte le cycle du projet — sinon le projet resterait "Terminé"
-        // pour toujours pendant que la tâche continuerait de se répéter
-        // toute seule, détachée d'un projet fermé.
+        // Le projet n'a pas sa propre répétition configurée : si une seule de
+        // ses tâches en a une (et que c'est justement celle-ci), c'est cette
+        // cadence qui porte le cycle du projet — sinon le projet resterait
+        // "Terminé" pour toujours pendant que la tâche continuerait de se
+        // répéter toute seule, détachée d'un projet fermé. On reprend aussi
+        // les dates de la tâche si le projet n'en a pas : sans ça, le
+        // renouvellement (qui a besoin de startDate/endDate sur le projet)
+        // ne se déclencherait pas non plus.
         const projectHasOwnRepeat = ownerProject.repeatUnit && ownerProject.repeatUnit !== 'aucune';
-        inheritedRepeat = !projectHasOwnRepeat && projectTasks.length === 1 && t.repeatUnit && t.repeatUnit !== 'aucune';
+        const repeatingTasks = projectTasks.filter(x => x.repeatUnit && x.repeatUnit !== 'aucune');
+        inheritedRepeat = !projectHasOwnRepeat && repeatingTasks.length === 1 && repeatingTasks[0].id === t.id;
         const projectToSave = inheritedRepeat
-          ? { ...ownerProject, status: 'termine', repeatUnit: t.repeatUnit, repeatEvery: t.repeatEvery }
+          ? { ...ownerProject, status: 'termine', repeatUnit: t.repeatUnit, repeatEvery: t.repeatEvery,
+              startDate: ownerProject.startDate || t.startDate, endDate: ownerProject.endDate || t.deadline }
           : { ...ownerProject, status: 'termine' };
         saveProject(projectToSave);
       }
@@ -3734,8 +3739,18 @@ function ReferentApp({ session, onSignOut }) {
     const clone = { ...original, id, name: `${original.name} (copie)`, status: 'en_cours', pendingApproval: false, createdBy: connectedAs, lateNotifiedAt: null, startReminderSent: false, endReminderSent: false };
     setProjects(prev => [...prev, clone]);
     warnIfFailed(await upsertRow('projects', clone), 'La copie du projet');
+    // Recale les dates des tâches copiées dans le calendrier du projet, au
+    // cas où l'original avait déjà une tâche légèrement hors créneaux
+    // (tolérée avant l'ajout de ce contrôle) — sinon impossible d'enregistrer
+    // quoi que ce soit sur la copie sans d'abord corriger cette tâche.
+    const clampToClone = (date) => {
+      if (!date) return date;
+      if (clone.startDate && date < clone.startDate) return clone.startDate;
+      if (clone.endDate && date > clone.endDate) return clone.endDate;
+      return date;
+    };
     const oldTasks = tasks.filter(t => t.projectId === original.id);
-    const clonedTasks = oldTasks.map(t => ({ ...t, id: uid(), projectId: id, status: 'a_faire', createdAt: todayISO() }));
+    const clonedTasks = oldTasks.map(t => ({ ...t, id: uid(), projectId: id, status: 'a_faire', createdAt: todayISO(), startDate: clampToClone(t.startDate), deadline: clampToClone(t.deadline) }));
     if (clonedTasks.length) {
       setTasks(prev => [...prev, ...clonedTasks]);
       warnIfFailed(await insertRows('tasks', clonedTasks), 'Les tâches du projet dupliqué');

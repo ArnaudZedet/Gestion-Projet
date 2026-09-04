@@ -3441,38 +3441,28 @@ function ReferentApp({ session, onSignOut }) {
     warnIfFailed(await upsertRow('tasks', t), 'La tâche');
     notifyTaskAssignment(existing, t);
     const ownerProject = projects.find(p => p.id === t.projectId);
+    // `tasks` (l'état avant cette mise à jour) contient encore l'ancienne
+    // version de la tâche qu'on vient de sauver — on la traite comme
+    // terminée (elle l'est, justCompleted le garantit) plutôt que de se
+    // fier à son statut pas encore rafraîchi dans ce tableau.
+    const projectTasksList = t.projectId ? tasks.filter(x => x.projectId === t.projectId) : [];
+    const projectHasOwnRepeat = !!(ownerProject?.repeatUnit && ownerProject.repeatUnit !== 'aucune');
+    // Le projet est "porteur de répétition" soit parce qu'il a la sienne,
+    // soit parce qu'une seule de ses tâches en a une (même règle que dans
+    // saveProject, qui hérite alors cette cadence pour le projet) — dans les
+    // deux cas, c'est le renouvellement du projet qui doit recréer la tâche,
+    // pas elle toute seule indépendamment.
+    const repeatingProjectTasks = projectTasksList.filter(x => x.repeatUnit && x.repeatUnit !== 'aucune');
+    const projectOwnsRepeat = !!ownerProject && (projectHasOwnRepeat || repeatingProjectTasks.length === 1);
     // Si cette tâche termine la dernière encore ouverte du projet, le projet
     // passe automatiquement "Terminé" à son tour — ça déclenche au passage
-    // sa propre répétition si elle en a une (voir saveProject). Le rappel du
-    // dernier jour reste utile pour les projets sans tâches, ou dont toutes
-    // les tâches ne se terminent jamais en même temps.
-    let inheritedRepeat = false;
-    if (justCompleted && ownerProject && ownerProject.status !== 'termine') {
-      const projectTasks = tasks.filter(x => x.projectId === t.projectId);
-      // `tasks` (l'état avant cette mise à jour) contient encore l'ancienne
-      // version de la tâche qu'on vient de sauver — on la traite comme
-      // terminée (elle l'est, justCompleted le garantit) plutôt que de se
-      // fier à son statut pas encore rafraîchi dans ce tableau.
-      if (projectTasks.length > 0 && projectTasks.every(x => x.id === t.id || x.status === 'termine')) {
-        // Le projet n'a pas sa propre répétition configurée : si une seule de
-        // ses tâches en a une (et que c'est justement celle-ci), c'est cette
-        // cadence qui porte le cycle du projet — sinon le projet resterait
-        // "Terminé" pour toujours pendant que la tâche continuerait de se
-        // répéter toute seule, détachée d'un projet fermé. On reprend aussi
-        // les dates de la tâche si le projet n'en a pas : sans ça, le
-        // renouvellement (qui a besoin de startDate/endDate sur le projet)
-        // ne se déclencherait pas non plus.
-        const projectHasOwnRepeat = ownerProject.repeatUnit && ownerProject.repeatUnit !== 'aucune';
-        const repeatingTasks = projectTasks.filter(x => x.repeatUnit && x.repeatUnit !== 'aucune');
-        inheritedRepeat = !projectHasOwnRepeat && repeatingTasks.length === 1 && repeatingTasks[0].id === t.id;
-        const projectToSave = inheritedRepeat
-          ? { ...ownerProject, status: 'termine', repeatUnit: t.repeatUnit, repeatEvery: t.repeatEvery,
-              startDate: ownerProject.startDate || t.startDate, endDate: ownerProject.endDate || t.deadline }
-          : { ...ownerProject, status: 'termine' };
-        saveProject(projectToSave);
-      }
+    // sa propre répétition (directement, ou héritée de cette tâche, voir
+    // saveProject). Le rappel du dernier jour reste utile pour les projets
+    // sans tâches, ou dont toutes les tâches ne se terminent jamais ensemble.
+    if (justCompleted && ownerProject && ownerProject.status !== 'termine' &&
+        projectTasksList.length > 0 && projectTasksList.every(x => x.id === t.id || x.status === 'termine')) {
+      saveProject({ ...ownerProject, status: 'termine' });
     }
-    const projectOwnsRepeat = inheritedRepeat || (ownerProject?.repeatUnit && ownerProject.repeatUnit !== 'aucune');
     if (justCompleted && !projectOwnsRepeat && t.repeatUnit && t.repeatUnit !== 'aucune') {
       let nextStart = shiftByRepeat(t.startDate, t.repeatUnit, t.repeatEvery);
       let nextDeadline = shiftByRepeat(t.deadline, t.repeatUnit, t.repeatEvery);
@@ -3651,10 +3641,23 @@ function ReferentApp({ session, onSignOut }) {
     // projet pour le cycle suivant (dates décalées), avec une copie de
     // chacune de ses tâches (dates décalées pareil, responsable qui tourne
     // si la tâche a "rotateAssignee").
+    // Un projet sans répétition propre, mais dont une seule tâche a la
+    // sienne, hérite de cette cadence (et de ses dates s'il n'en a pas
+    // lui-même) — pour que "terminer le projet" fasse toujours repartir un
+    // cycle complet (projet + tâche à l'intérieur), qu'on l'ait terminé
+    // directement ou via sa dernière tâche.
+    const ownTasksForRepeat = tasks.filter(x => x.projectId === projectObj.id);
+    const soleRepeatingTasks = (!projectObj.repeatUnit || projectObj.repeatUnit === 'aucune')
+      ? ownTasksForRepeat.filter(x => x.repeatUnit && x.repeatUnit !== 'aucune')
+      : [];
+    const effectiveRepeat = soleRepeatingTasks.length === 1
+      ? { unit: soleRepeatingTasks[0].repeatUnit, every: soleRepeatingTasks[0].repeatEvery,
+          startDate: projectObj.startDate || soleRepeatingTasks[0].startDate, endDate: projectObj.endDate || soleRepeatingTasks[0].deadline }
+      : { unit: projectObj.repeatUnit, every: projectObj.repeatEvery, startDate: projectObj.startDate, endDate: projectObj.endDate };
     let renewedProject = null;
-    if (justCompleted && projectObj.repeatUnit && projectObj.repeatUnit !== 'aucune' && projectObj.startDate && projectObj.endDate) {
-      const nextStart = shiftByRepeat(projectObj.startDate, projectObj.repeatUnit, projectObj.repeatEvery);
-      const nextEnd = shiftByRepeat(projectObj.endDate, projectObj.repeatUnit, projectObj.repeatEvery);
+    if (justCompleted && effectiveRepeat.unit && effectiveRepeat.unit !== 'aucune' && effectiveRepeat.startDate && effectiveRepeat.endDate) {
+      const nextStart = shiftByRepeat(effectiveRepeat.startDate, effectiveRepeat.unit, effectiveRepeat.every);
+      const nextEnd = shiftByRepeat(effectiveRepeat.endDate, effectiveRepeat.unit, effectiveRepeat.every);
       let newResponsibleIds = projectObj.responsibleIds || [];
       let newResponsibleRotationPool = projectObj.responsibleRotationPool || [];
       if (projectObj.rotateResponsible && newResponsibleIds.length > 0) {
@@ -3674,7 +3677,7 @@ function ReferentApp({ session, onSignOut }) {
           newResponsibleRotationPool = rotated.rotationPool;
         }
       }
-      const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd, lateNotifiedAt: null, startReminderSent: false, endReminderSent: false, responsibleIds: newResponsibleIds, responsibleRotationPool: newResponsibleRotationPool };
+      const newProject = { ...projectObj, id: uid(), status: 'en_cours', startDate: nextStart, endDate: nextEnd, repeatUnit: effectiveRepeat.unit, repeatEvery: effectiveRepeat.every, lateNotifiedAt: null, startReminderSent: false, endReminderSent: false, responsibleIds: newResponsibleIds, responsibleRotationPool: newResponsibleRotationPool };
       renewedProject = newProject;
       setProjects(prev => [...prev, newProject]);
       warnIfFailed(await upsertRow('projects', newProject), 'Le renouvellement du projet');
@@ -3688,8 +3691,8 @@ function ReferentApp({ session, onSignOut }) {
       const clonedTasks = oldTasks.map(t => {
         const clone = {
           ...t, id: uid(), projectId: newProject.id, status: 'a_faire', createdAt: todayISO(),
-          startDate: shiftByRepeat(t.startDate, projectObj.repeatUnit, projectObj.repeatEvery),
-          deadline: shiftByRepeat(t.deadline, projectObj.repeatUnit, projectObj.repeatEvery),
+          startDate: shiftByRepeat(t.startDate, effectiveRepeat.unit, effectiveRepeat.every),
+          deadline: shiftByRepeat(t.deadline, effectiveRepeat.unit, effectiveRepeat.every),
         };
         if (t.rotateAssignee && t.assignMode === 'individuel') {
           const { assigneeId, rotationPool } = nextRotatedAssignee(t, newProject.teamIds, clone.deadline);

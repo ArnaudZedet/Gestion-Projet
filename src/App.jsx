@@ -198,7 +198,7 @@ const fmtPhone = (p) => { if (!p) return ''; const digits = String(p).replace(/\
 // Compare les noms tels quels saisis chez nous ("Prénom Nom") à ceux renvoyés
 // par Swappy ("Prénom NOM" en majuscules, accents...) sans faux négatif sur
 // la casse ou les accents.
-const normalizeName = (s) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+const normalizeName = (s) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[‘’ʼ'-]/g, ' ').replace(/\s+/g, ' ').trim();
 
 // Interroge le planning Swappy (via api/swappy-presence, qui garde le jeton
 // côté serveur) pour savoir qui a au moins un créneau posé sur la période —

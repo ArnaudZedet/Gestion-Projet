@@ -3,7 +3,7 @@ import { supabase } from './supabaseClient';
 import {
   LayoutDashboard, ListChecks, Users, CalendarDays, Bell,
   Plus, X, Pencil, Trash2, AlertTriangle, CheckCircle2, Clock3,
-  Search, Loader2, Inbox, GanttChartSquare, MapPin, Lock, Target, Repeat,
+  Search, Loader2, Inbox, GanttChartSquare, MapPin, Lock, Repeat,
   ClipboardList, Send, XCircle, Building2, Mail, Phone, Check,
   Flag, PlayCircle, ShieldAlert, GraduationCap, Milestone as MilestoneIcon, Megaphone, ClipboardCheck,
   ChevronLeft, ChevronRight, ChevronDown, FolderPlus, List as ListIcon, Download, Copy, Upload, MessageSquare, Network, MessageCircle
@@ -54,8 +54,6 @@ const SCOPES = [
   { id: 'moyenne', label: 'Moyenne (quelques semaines)', short: 'Moyenne' },
   { id: 'longue',  label: 'Longue (plusieurs mois)', short: 'Longue' },
 ];
-const isUrgent = (t) => t.priority === 'urgente' || t.priority === 'haute';
-const isImportant = (t) => t.importance === 'critique' || t.importance === 'elevee';
 
 const PROJECT_COLORS = ['#2563EB', '#0D9488', '#B54708', '#7C3AED', '#B42318', '#0369A1', '#4D7C0F'];
 const FUNCTIONS = ['Manipulateur', 'Secrétaire', 'Aide manipulateur', 'Médecin', 'Échographiste', 'Manager'];
@@ -2544,67 +2542,6 @@ function GanttView({ tasks, projects, members, openTask, onOpenProject }) {
 }
 
 /* ---------------------------------------------------------------------- */
-/*  Priorisation (matrice urgence × importance)                           */
-/* ---------------------------------------------------------------------- */
-
-function ProjectPriorityCard({ p, members, onOpenProject }) {
-  const responsibles = (p.responsibleIds || []).map(id => members.find(m => m.id === id)).filter(Boolean);
-  const color = (p.service && SERVICE_COLORS[p.service]) || p.color || '#64748B';
-  return (
-    <button onClick={() => onOpenProject(p)} className="w-full text-left bg-white/70 hover:bg-white rounded-xl px-3 py-2.5 border border-slate-100">
-      <div className="text-xs font-medium text-slate-700 truncate mb-1.5 flex items-center gap-1.5">
-        <span style={{ background: color }} className="w-2 h-2 rounded-full shrink-0" />{p.name}
-      </div>
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {p.service && <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color }}>{p.service}</span>}
-        {responsibles[0] && <span className="flex items-center gap-1 text-[10px] text-slate-400"><Avatar name={responsibles[0].name} size={16} />{responsibles[0].name.split(' ')[0]}</span>}
-        <span className="ml-auto text-[10px] text-slate-400">{p.endDate ? `Fin ${fmtDate(p.endDate)}` : 'Sans échéance'}</span>
-      </div>
-    </button>
-  );
-}
-function Quadrant({ title, subtitle, accent, bg, list, renderItem }) {
-  return (
-    <div style={{ background: bg, border: `1.5px solid ${accent}55` }} className="rounded-2xl p-4 min-h-[220px]">
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <div className="text-sm font-semibold" style={{ fontFamily: 'Space Grotesk, sans-serif', color: accent }}>{title}</div>
-          <div className="text-xs text-slate-500">{subtitle}</div>
-        </div>
-        <span style={{ background: accent }} className="text-white text-xs font-semibold rounded-full w-6 h-6 flex items-center justify-center shrink-0">{list.length}</span>
-      </div>
-      <div className="space-y-1.5">
-        {list.length === 0 && <div className="text-xs text-slate-400 px-1">Rien ici</div>}
-        {list.map(renderItem)}
-      </div>
-    </div>
-  );
-}
-// Classe automatiquement les projets (pas les tâches) selon la Priorité et
-// l'Importance fixées à leur création — le classement se met à jour tout
-// seul dès qu'on modifie ces champs sur le projet.
-function PrioritisationView({ projects, members, onOpenProject }) {
-  const active = projects.filter(p => p.status !== 'termine');
-  const sortByEnd = (a, b) => (a.endDate || '9999').localeCompare(b.endDate || '9999');
-  const q1 = active.filter(p => isUrgent(p) && isImportant(p)).sort(sortByEnd);
-  const q2 = active.filter(p => !isUrgent(p) && isImportant(p)).sort(sortByEnd);
-  const q3 = active.filter(p => isUrgent(p) && !isImportant(p)).sort(sortByEnd);
-  const q4 = active.filter(p => !isUrgent(p) && !isImportant(p)).sort(sortByEnd);
-  const renderItem = (p) => <ProjectPriorityCard key={p.id} p={p} members={members} onOpenProject={onOpenProject} />;
-  return (
-    <div>
-      <div className="text-xs text-slate-400 mb-4">Le classement est automatique, d'après la Priorité et l'Importance fixées à la création du projet (modifiables par un administrateur depuis la fiche projet).</div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Quadrant title="Faire maintenant" subtitle="Urgent et important" accent="#B42318" bg="#FBD5D1" list={q1} renderItem={renderItem} />
-        <Quadrant title="Planifier" subtitle="Important, pas urgent" accent="#1849A9" bg="#C9DBFD" list={q2} renderItem={renderItem} />
-        <Quadrant title="Déléguer" subtitle="Urgent, peu important" accent="#B54708" bg="#FBE3AE" list={q3} renderItem={renderItem} />
-        <Quadrant title="Reporter / éliminer" subtitle="Ni urgent ni important" accent="#475467" bg="#DBDFE3" list={q4} renderItem={renderItem} />
-      </div>
-    </div>
-  );
-}
-
-/* ---------------------------------------------------------------------- */
 /*  Transmissions                                                         */
 /* ---------------------------------------------------------------------- */
 
@@ -3079,7 +3016,6 @@ function navFor(perm) {
     nav.push({ id: 'gantt', label: 'Durée des projets', Icon: GanttChartSquare, accent: '#A78BFA' });
   }
   if (perm.isManager) {
-    nav.push({ id: 'priorisation', label: 'Priorisation', Icon: Target, accent: '#FB923C' });
     nav.push({ id: 'team', label: 'Équipe', Icon: Users, accent: '#F472B6' });
     nav.push({ id: 'contacts', label: 'Contacts externes', Icon: Building2, accent: '#C084FC' });
   }
@@ -4051,7 +3987,6 @@ function ReferentApp({ session, onSignOut }) {
           {view === 'planning' && <PlanningView members={members} tasks={scopedTasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
           {view === 'transmissions' && <TransmissionsView transmissions={transmissions} members={members} currentMemberId={connectedAs} channelLastSeen={channelLastSeen} onMarkChannelSeen={markChannelSeen} onPost={postTransmission} />}
           {view === 'gantt' && <GanttView tasks={scopedTasks} members={members} projects={scopedProjects} openTask={(t) => setTaskModal({ task: t })} onOpenProject={(p) => setProjectModal({ project: p })} />}
-          {view === 'priorisation' && <PrioritisationView projects={scopedProjects} members={members} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} onImport={importMembers} />}
           {view === 'contacts' && <ContactsView contacts={externalContacts} perm={perm} editContact={(c) => setContactModal({ contact: c })} newContact={() => setContactModal({ contact: null })} />}
           {view === 'orgchart' && <OrgChartView nodes={orgNodes} assignments={orgAssignments} members={members} externalContacts={externalContacts} perm={perm}

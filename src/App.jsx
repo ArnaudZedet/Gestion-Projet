@@ -3130,7 +3130,7 @@ function navFor(perm) {
     nav.push({ id: 'gantt', label: 'Durée des projets', Icon: GanttChartSquare, accent: '#A78BFA' });
   }
   if (perm.isManager) {
-    nav.push({ id: 'admin_tasks', label: 'Tâches en attente', Icon: ListTodo, accent: '#14B8A6' });
+    nav.push({ id: 'admin_tasks', label: 'Tâches Managers', Icon: ListTodo, accent: '#14B8A6' });
     nav.push({ id: 'team', label: 'Équipe', Icon: Users, accent: '#F472B6' });
     nav.push({ id: 'contacts', label: 'Contacts externes', Icon: Building2, accent: '#C084FC' });
   }

@@ -1808,7 +1808,16 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterTeam, setFilterTeam] = useState('all');
   const [filterService, setFilterService] = useState('all');
+  // Toujours ouvrir sur les projets en cours — les projets terminés sont
+  // rangés à part, à consulter volontairement plutôt que de rester mélangés
+  // avec le travail en cours.
+  const [projectStatusFilter, setProjectStatusFilter] = useState('en_cours');
   const [query, setQuery] = useState('');
+  // Un projet sélectionné dans un onglet peut ne plus exister dans l'autre
+  // (En cours / Terminés) — on repart sur "Tous les projets" pour éviter de
+  // continuer à afficher les tâches d'un projet qui ne correspond plus au
+  // filtre affiché.
+  useEffect(() => { setFilterProject('all'); }, [projectStatusFilter]);
   const selectCls = "border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 bg-white focus:outline-none";
 
   // Filtre "Manipulateurs" / "Secrétaires" : sur l'équipe affectée au projet
@@ -1844,7 +1853,7 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
     t.title.toLowerCase().includes(query.toLowerCase())
   );
 
-  const visibleProjects = projects.filter(p => projectMatchesTeam(p) && projectMatchesService(p));
+  const visibleProjects = projects.filter(p => projectMatchesTeam(p) && projectMatchesService(p) && (p.status === projectStatusFilter));
   const byDeadline = (a, b) => {
     if (!a.deadline && !b.deadline) return 0;
     if (!a.deadline) return 1;
@@ -1864,7 +1873,11 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
   const projectGroups = grouped
     ? visibleProjects.map(p => ({ project: p, items: filtered.filter(t => t.projectId === p.id).sort(byResponsibleThenDeadline) })).filter(g => g.items.length > 0)
     : [{ project: projects.find(p => p.id === filterProject), items: [...filtered].sort(byResponsibleThenDeadline) }];
-  const noProject = filtered.filter(t => !projects.some(p => p.id === t.projectId) && matchesTeam(t) && filterService === 'all').sort(byResponsibleThenDeadline);
+  // Les tâches sans projet n'ont pas de statut de projet à filtrer — elles
+  // restent dans l'onglet "En cours" uniquement, pas dans "Terminés".
+  const noProject = projectStatusFilter === 'en_cours'
+    ? filtered.filter(t => !projects.some(p => p.id === t.projectId) && matchesTeam(t) && filterService === 'all').sort(byResponsibleThenDeadline)
+    : [];
   const noProjectGroup = grouped && noProject.length ? { project: { id: '_none', name: 'Sans projet', color: '#94A3B8' }, items: noProject } : null;
 
   // Regroupement par service (couleur dominante), puis par ordre chronologique
@@ -1967,6 +1980,16 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
 
   return (
     <div>
+      <div className="flex items-center gap-2 mb-3">
+        <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+          {[{ id: 'en_cours', label: 'Projets en cours' }, { id: 'termine', label: 'Projets terminés' }].map(o => (
+            <button key={o.id} type="button" onClick={() => setProjectStatusFilter(o.id)}
+              className={`px-3 py-1.5 font-medium ${projectStatusFilter === o.id ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <div className="relative flex-1 min-w-[160px]">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -1993,7 +2016,7 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
           ))}
         </div>
         <div className="ml-auto flex gap-2">
-          {perm.canCreateProject && <button onClick={newProject} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><FolderPlus size={14} /> Nouveau projet</button>}
+          {perm.canCreateProject && <button onClick={() => { setProjectStatusFilter('en_cours'); newProject(); }} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><FolderPlus size={14} /> Nouveau projet</button>}
           {perm.canCreateTask && <button onClick={() => newTask(filterProject !== 'all' ? filterProject : undefined)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Plus size={14} /> Nouvelle tâche</button>}
         </div>
       </div>

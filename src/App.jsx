@@ -2182,8 +2182,13 @@ const isoOfDate = (d) => d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padS
 // Grille mensuelle générique — le contenu de chaque case (tâches/RDV pour
 // Planning, projets actifs ce jour-là pour Durée des projets...) est fourni
 // par renderDay(iso), pour réutiliser la même mise en page partout.
-function MonthCalendar({ year, month, onPrev, onNext, renderDay, onDayDrop }) {
+function MonthCalendar({ year, month, onPrev, onNext, renderDay, onDayDrop, hideWeekends }) {
   const cells = monthMatrix(year, month);
+  // La semaine (monthMatrix) est rangée Lundi→Dimanche : les positions 5 et 6
+  // de chaque bloc de 7 sont Samedi/Dimanche — on les retire si hideWeekends.
+  const visibleCells = hideWeekends ? cells.filter((_, i) => i % 7 < 5) : cells;
+  const dayLabels = hideWeekends ? ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven'] : ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+  const gridCls = hideWeekends ? 'grid grid-cols-5 gap-1' : 'grid grid-cols-7 gap-1';
   const monthLabel = new Date(year, month, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
   // onDayDrop, si fourni, rend chaque case de jour receveuse d'un
   // glisser-déposer (voir AdminTasksView) — sans ça (usages existants de ce
@@ -2195,11 +2200,11 @@ function MonthCalendar({ year, month, onPrev, onNext, renderDay, onDayDrop }) {
         <div className="text-sm font-semibold text-slate-700 capitalize" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>{monthLabel}</div>
         <button onClick={onNext} className="p-1.5 rounded-lg hover:bg-slate-50 text-slate-400"><ChevronRight size={16} /></button>
       </div>
-      <div className="grid grid-cols-7 gap-1 text-[10px] text-slate-400 mb-1 uppercase">
-        {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map(d => <div key={d} className="text-center py-1">{d}</div>)}
+      <div className={`${gridCls} text-[10px] text-slate-400 mb-1 uppercase`}>
+        {dayLabels.map(d => <div key={d} className="text-center py-1">{d}</div>)}
       </div>
-      <div className="grid grid-cols-7 gap-1">
-        {cells.map((d, i) => {
+      <div className={gridCls}>
+        {visibleCells.map((d, i) => {
           const iso = isoOfDate(d);
           const today = iso === todayISO();
           return (
@@ -2471,7 +2476,7 @@ function AdminTasksView({ adminTasks, members, currentMemberId, onSave, onDelete
   const managerColumn = (m) => (
     <div key={m.id}>
       <div className="text-sm font-semibold text-slate-700 mb-2 flex items-center gap-1.5"><Avatar name={m.name} size={18} />{m.name}</div>
-      <MonthCalendar year={cursor.year} month={cursor.month} onPrev={prevMonth} onNext={nextMonth}
+      <MonthCalendar year={cursor.year} month={cursor.month} onPrev={prevMonth} onNext={nextMonth} hideWeekends
         onDayDrop={(iso) => assignToDay(m.id, iso)}
         renderDay={(iso) => adminTasks.filter(t => t.assigneeId === m.id && t.date === iso).map(t => (
           <AdminTaskPill key={t.id} t={t} onDragStart={() => setDraggingId(t.id)} onToggleDone={() => toggleDone(t)} onDelete={() => onDelete(t.id)} />

@@ -3634,6 +3634,18 @@ function ReferentApp({ session, onSignOut }) {
     if (exists) notifyProjectChanges(prevProject, projectObj);
     else notifyNewProjectTeam(projectObj);
 
+    // Un projet qu'on marque "Terminé" clôture avec lui toutes ses tâches
+    // encore ouvertes — un projet fini ne doit pas laisser de tâches
+    // traînantes "Programmée"/"En cours" derrière lui.
+    if (justCompleted) {
+      const openTasks = tasks.filter(x => x.projectId === projectObj.id && x.status !== 'termine');
+      if (openTasks.length > 0) {
+        const closedTasks = openTasks.map(x => ({ ...x, status: 'termine' }));
+        setTasks(prev => prev.map(x => closedTasks.find(c => c.id === x.id) || x));
+        warnIfFailed(await upsertRows('tasks', closedTasks), 'La clôture des tâches du projet');
+      }
+    }
+
     // Garder les tâches du projet cohérentes avec l'équipe et le responsable
     // actuels (utile après une duplication vers un autre service, ou un
     // simple changement d'équipe) : on retire des tâches les personnes qui

@@ -195,6 +195,30 @@ const fmtDateLong = (iso) => { if (!iso) return '—'; const d = new Date(iso + 
 // dont le numéro a été saisi (espaces, tirets...).
 const fmtPhone = (p) => { if (!p) return ''; const digits = String(p).replace(/\D/g, ''); return digits.match(/.{1,2}/g)?.join('.') || p; };
 
+// Compare les noms tels quels saisis chez nous ("Prénom Nom") à ceux renvoyés
+// par Swappy ("Prénom NOM" en majuscules, accents...) sans faux négatif sur
+// la casse ou les accents.
+const normalizeName = (s) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+// Interroge le planning Swappy (via api/swappy-presence, qui garde le jeton
+// côté serveur) pour savoir qui a au moins un créneau posé sur la période —
+// utilisé pour écarter du tirage au sort une personne absente cette
+// semaine-là. Renvoie null (plutôt que de bloquer) si Swappy ne répond pas :
+// l'intégration ne doit jamais empêcher de créer un projet ou une tâche.
+async function fetchSwappyPresence(accessToken, start, end) {
+  if (!start || !end) return null;
+  try {
+    const res = await fetch(`/api/swappy-presence?start=${start}&end=${end}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return new Set((data.names || []).map(normalizeName));
+  } catch {
+    return null;
+  }
+}
+
 const REPEAT_UNITS = [
   { id: 'aucune',  label: 'Ne se répète pas' },
   { id: 'jour',    label: 'Jour(s)' },
@@ -1098,7 +1122,7 @@ function MemberModal({ member, onSave, onDelete, onClose }) {
 /*  Fiche projet — création avec équipe + conduite de projet automatique  */
 /* ---------------------------------------------------------------------- */
 
-function ProjectModal({ project, members, externalContacts, tasks, projects, currentMemberId, perm, onSave, onDelete, onDuplicate, onClose }) {
+function ProjectModal({ project, members, externalContacts, tasks, projects, currentMemberId, perm, session, onSave, onDelete, onDuplicate, onClose }) {
   const isNew = !project;
   const locked = !canEditProject(project, currentMemberId, perm.isManager);
   const [form, setForm] = useState(project || { name: '', description: '', service: '', color: PROJECT_COLORS[0], teamIds: currentMemberId ? [currentMemberId] : [], externalIds: [], startDate: '', endDate: '', status: 'en_cours', priority: 'normale', importance: 'moyenne', repeatUnit: 'aucune', repeatEvery: 1, responsibleIds: [], rotateResponsible: false, rotateResponsibleCount: 1, responsibleRotationPool: [] });
@@ -1138,7 +1162,7 @@ function ProjectModal({ project, members, externalContacts, tasks, projects, cur
     : PROJECT_SERVICES;
 
   const [outOfRangeWarning, setOutOfRangeWarning] = useState('');
-  const doSave = () => {
+  const doSave = async () => {
     const id = form.id || uid();
     const projectObj = { ...form, id };
     if (isNew) {
@@ -1150,10 +1174,21 @@ function ProjectModal({ project, members, externalContacts, tasks, projects, cur
     // l'équipe (hors personnes exclues du roulement), plutôt que d'attendre
     // le premier renouvellement pour avoir un responsable.
     if (projectObj.rotateResponsible && (!projectObj.responsibleIds || projectObj.responsibleIds.length === 0) && (projectObj.teamIds || []).length > 0) {
-      const eligible = projectObj.teamIds.filter(mid => {
+      let eligible = projectObj.teamIds.filter(mid => {
         const mm = members.find(x => x.id === mid);
         return !(mm?.alwaysApprover || mm?.role === 'Manager');
       });
+      // Écarte du tirage les personnes absentes (planning Swappy) la
+      // semaine de démarrage du projet, sauf si ça ne laisserait plus
+      // personne d'éligible.
+      if (eligible.length > 1 && projectObj.startDate && session?.access_token) {
+        const weekStart = startOfWeekISO(projectObj.startDate);
+        const presentSet = await fetchSwappyPresence(session.access_token, weekStart, addDays(weekStart, 6));
+        if (presentSet) {
+          const present = eligible.filter(mid => presentSet.has(normalizeName(members.find(m => m.id === mid)?.name)));
+          if (present.length > 0) eligible = present;
+        }
+      }
       // Si personne dans l'équipe n'est éligible (tous exclus du roulement),
       // on laisse le responsable vide plutôt que de retomber sur l'équipe
       // brute — piocher quand même violerait la règle d'exclusion appliquée
@@ -3345,7 +3380,7 @@ function ReferentApp({ session, onSignOut }) {
   // passe une fois avant qu'un nom puisse ressortir une deuxième fois.
   // rotationPool = les personnes qui n'ont pas encore été tirées dans le
   // cycle en cours ; vide → on démarre un nouveau cycle (nouveau tirage).
-  const nextRotatedAssignee = (t, teamOverride, targetDate, loadFn) => {
+  const nextRotatedAssignee = (t, teamOverride, targetDate, loadFn, presentSet) => {
     const rawTeam = teamOverride || projects.find(p => p.id === t.projectId)?.teamIds || [];
     // Certaines personnes (toujours approbatrices, ou fonction "Manager") ne
     // doivent jamais être tirées au sort comme responsable, même en
@@ -3380,7 +3415,15 @@ function ReferentApp({ session, onSignOut }) {
       // ci-dessus) : on l'exclut du choix par charge, sauf si elle est
       // vraiment la seule option restante dans le sac.
       const candidateIdx = pool.map((_, i) => i).filter(i => pool[i] !== t.assigneeId);
-      const searchIn = candidateIdx.length > 0 ? candidateIdx : pool.map((_, i) => i);
+      let searchIn = candidateIdx.length > 0 ? candidateIdx : pool.map((_, i) => i);
+      // Écarte du choix les personnes absentes cette semaine-là (planning
+      // Swappy), sauf si ça ne laisserait plus personne : le projet ou la
+      // tâche doit toujours avoir un responsable, même si tout le monde dont
+      // c'est le tour est absent.
+      if (presentSet) {
+        const presentIn = searchIn.filter(i => presentSet.has(normalizeName(members.find(m => m.id === pool[i])?.name)));
+        if (presentIn.length > 0) searchIn = presentIn;
+      }
       let bestLoad = Infinity;
       searchIn.forEach(i => { const l = load(pool[i]); if (l < bestLoad) { bestLoad = l; pickIdx = i; } });
     }
@@ -3397,7 +3440,7 @@ function ReferentApp({ session, onSignOut }) {
   // les personnes pas encore prises CE tour-ci (et seulement si vraiment
   // tout le monde a déjà été pris cette fois, on autorise un doublon —
   // n'arrive que si le nombre demandé dépasse la taille de l'équipe).
-  const nextRotatedAssignees = (prevIds, prevPool, count, teamOverride, targetDate, loadFn) => {
+  const nextRotatedAssignees = (prevIds, prevPool, count, teamOverride, targetDate, loadFn, presentSet) => {
     const team = (teamOverride || []).filter(id => {
       const m = members.find(x => x.id === id);
       return !(m?.alwaysApprover || m?.role === 'Manager');
@@ -3409,8 +3452,14 @@ function ReferentApp({ session, onSignOut }) {
     while (picked.length < n) {
       if (pool.length === 0) pool = shuffleArray(team.filter(id => !picked.includes(id)));
       if (pool.length === 0) pool = shuffleArray(team);
-      const candidates = pool.filter(id => !picked.includes(id));
+      let candidates = pool.filter(id => !picked.includes(id));
       if (candidates.length === 0) { pool = []; continue; }
+      // Même garde-fou que nextRotatedAssignee : on écarte les absents de
+      // cette semaine, sauf si ça vide entièrement les candidats.
+      if (presentSet) {
+        const presentCandidates = candidates.filter(id => presentSet.has(normalizeName(members.find(m => m.id === id)?.name)));
+        if (presentCandidates.length > 0) candidates = presentCandidates;
+      }
       let pickIdx = 0;
       if (targetDate && candidates.length > 1 && loadFn) {
         let bestLoad = Infinity;
@@ -3425,9 +3474,9 @@ function ReferentApp({ session, onSignOut }) {
 
   // Même principe que nextRotatedAssignee, mais pour le mode Équipe (RACI) :
   // le rôle "R" (Responsable) tourne, les autres rôles (A/C/I) restent tels quels.
-  const rotateRaciResponsible = (t, teamOverride, targetDate) => {
+  const rotateRaciResponsible = (t, teamOverride, targetDate, presentSet) => {
     const currentR = Object.entries(t.raci || {}).find(([, r]) => r === 'R')?.[0] || '';
-    const { assigneeId, rotationPool } = nextRotatedAssignee({ ...t, assigneeId: currentR }, teamOverride, targetDate);
+    const { assigneeId, rotationPool } = nextRotatedAssignee({ ...t, assigneeId: currentR }, teamOverride, targetDate, undefined, presentSet);
     const raci = { ...(t.raci || {}) };
     Object.keys(raci).forEach(id => { if (raci[id] === 'R') delete raci[id]; });
     if (assigneeId) raci[assigneeId] = 'R';
@@ -3473,14 +3522,18 @@ function ReferentApp({ session, onSignOut }) {
         guard++;
       }
       const clone = { ...t, id: uid(), status: 'a_faire', createdAt: todayISO(), startDate: nextStart, deadline: nextDeadline };
-      if (t.rotateAssignee && t.assignMode === 'individuel') {
-        const { assigneeId, rotationPool } = nextRotatedAssignee(t, undefined, nextDeadline);
-        clone.assigneeId = assigneeId;
-        clone.rotationPool = rotationPool;
-      } else if (t.rotateAssignee && t.assignMode === 'equipe') {
-        const { raci, rotationPool } = rotateRaciResponsible(t, undefined, nextDeadline);
-        clone.raci = raci;
-        clone.rotationPool = rotationPool;
+      if (t.rotateAssignee && (t.assignMode === 'individuel' || t.assignMode === 'equipe')) {
+        const weekStart = startOfWeekISO(nextDeadline);
+        const presentSet = await fetchSwappyPresence(session.access_token, weekStart, addDays(weekStart, 6));
+        if (t.assignMode === 'individuel') {
+          const { assigneeId, rotationPool } = nextRotatedAssignee(t, undefined, nextDeadline, undefined, presentSet);
+          clone.assigneeId = assigneeId;
+          clone.rotationPool = rotationPool;
+        } else {
+          const { raci, rotationPool } = rotateRaciResponsible(t, undefined, nextDeadline, presentSet);
+          clone.raci = raci;
+          clone.rotationPool = rotationPool;
+        }
       }
       setTasks(prev => [...prev, clone]);
       warnIfFailed(await upsertRow('tasks', clone), 'La prochaine occurrence');
@@ -3658,6 +3711,11 @@ function ReferentApp({ session, onSignOut }) {
     if (justCompleted && effectiveRepeat.unit && effectiveRepeat.unit !== 'aucune' && effectiveRepeat.startDate && effectiveRepeat.endDate) {
       const nextStart = shiftByRepeat(effectiveRepeat.startDate, effectiveRepeat.unit, effectiveRepeat.every);
       const nextEnd = shiftByRepeat(effectiveRepeat.endDate, effectiveRepeat.unit, effectiveRepeat.every);
+      // Une seule vérification de présence (semaine de démarrage du nouveau
+      // cycle), réutilisée pour le tirage du responsable et celui de chaque
+      // tâche — la personne doit être présente au lancement du cycle.
+      const cycleWeekStart = startOfWeekISO(nextStart);
+      const presentSet = await fetchSwappyPresence(session.access_token, cycleWeekStart, addDays(cycleWeekStart, 6));
       let newResponsibleIds = projectObj.responsibleIds || [];
       let newResponsibleRotationPool = projectObj.responsibleRotationPool || [];
       if (projectObj.rotateResponsible && newResponsibleIds.length > 0) {
@@ -3671,7 +3729,7 @@ function ReferentApp({ session, onSignOut }) {
         const projectLoadOf = (id) => projects.filter(p => p.id !== projectObj.id && p.status !== 'termine' &&
           (p.responsibleIds || []).includes(id) && p.startDate && p.endDate && p.startDate <= nextEnd && p.endDate >= nextStart).length;
         const count = projectObj.rotateResponsibleCount || newResponsibleIds.length;
-        const rotated = nextRotatedAssignees(newResponsibleIds, projectObj.responsibleRotationPool, count, projectObj.teamIds, nextStart, projectLoadOf);
+        const rotated = nextRotatedAssignees(newResponsibleIds, projectObj.responsibleRotationPool, count, projectObj.teamIds, nextStart, projectLoadOf, presentSet);
         if (rotated.assigneeIds.length > 0) {
           newResponsibleIds = rotated.assigneeIds;
           newResponsibleRotationPool = rotated.rotationPool;
@@ -3695,11 +3753,11 @@ function ReferentApp({ session, onSignOut }) {
           deadline: shiftByRepeat(t.deadline, effectiveRepeat.unit, effectiveRepeat.every),
         };
         if (t.rotateAssignee && t.assignMode === 'individuel') {
-          const { assigneeId, rotationPool } = nextRotatedAssignee(t, newProject.teamIds, clone.deadline);
+          const { assigneeId, rotationPool } = nextRotatedAssignee(t, newProject.teamIds, clone.deadline, undefined, presentSet);
           clone.assigneeId = assigneeId;
           clone.rotationPool = rotationPool;
         } else if (t.rotateAssignee && t.assignMode === 'equipe') {
-          const { raci, rotationPool } = rotateRaciResponsible(t, newProject.teamIds, clone.deadline);
+          const { raci, rotationPool } = rotateRaciResponsible(t, newProject.teamIds, clone.deadline, presentSet);
           clone.raci = raci;
           clone.rotationPool = rotationPool;
         } else if (t.assignMode === 'individuel' && newResponsibleIds[0] && t.assigneeId && (projectObj.responsibleIds || []).includes(t.assigneeId)) {
@@ -3946,7 +4004,7 @@ function ReferentApp({ session, onSignOut }) {
 
       {taskModal && <TaskModal key={taskModal.task?.id || 'new'} task={taskModal.task} initialProjectId={taskModal.presetProjectId} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} onSave={saveTask} onDelete={deleteTask} onClaim={claimTask} onDuplicate={duplicateTask} onClose={() => setTaskModal(null)} />}
       {memberModal && perm.canManageTeam && <MemberModal member={memberModal.member} onSave={saveMember} onDelete={deleteMember} onClose={() => setMemberModal(null)} />}
-      {projectModal && perm.canCreateProject && <ProjectModal key={projectModal.project?.id || 'new'} project={projectModal.project} members={members} externalContacts={externalContacts} tasks={tasks} projects={projects} currentMemberId={connectedAs} perm={perm} onSave={saveProject} onDelete={deleteProject} onDuplicate={duplicateProject} onClose={() => setProjectModal(null)} />}
+      {projectModal && perm.canCreateProject && <ProjectModal key={projectModal.project?.id || 'new'} project={projectModal.project} members={members} externalContacts={externalContacts} tasks={tasks} projects={projects} currentMemberId={connectedAs} perm={perm} session={session} onSave={saveProject} onDelete={deleteProject} onDuplicate={duplicateProject} onClose={() => setProjectModal(null)} />}
       {apptModal && <AppointmentModal appointment={apptModal.appointment} members={members} externalContacts={externalContacts} readOnly={!perm.canManageAppointments} onSave={saveAppt} onDelete={deleteAppt} onClose={() => setApptModal(null)} />}
       {contactModal && perm.canManageContacts && <ContactModal contact={contactModal.contact} onSave={saveContact} onDelete={deleteContact} onClose={() => setContactModal(null)} />}
       {requestModal && <RequestModal members={members} externalContacts={externalContacts} projects={projects} currentMemberId={connectedAs} onSave={saveRequest} onClose={() => setRequestModal(null)} />}

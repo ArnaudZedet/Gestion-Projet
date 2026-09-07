@@ -6,7 +6,7 @@ import {
   Search, Loader2, Inbox, GanttChartSquare, MapPin, Lock, Repeat,
   ClipboardList, Send, XCircle, Building2, Mail, Phone, Check,
   Flag, PlayCircle, ShieldAlert, GraduationCap, Milestone as MilestoneIcon, Megaphone, ClipboardCheck,
-  ChevronLeft, ChevronRight, ChevronDown, FolderPlus, List as ListIcon, Download, Copy, Upload, MessageSquare, Network, MessageCircle
+  ChevronLeft, ChevronRight, ChevronDown, FolderPlus, List as ListIcon, Download, Copy, Upload, MessageSquare, Network, MessageCircle, ListTodo
 } from 'lucide-react';
 
 /* ---------------------------------------------------------------------- */
@@ -390,6 +390,15 @@ const ROW_MAPPERS = {
       origin: row.origin, requesterMemberId: row.requester_member_id || '', requesterContactId: row.requester_contact_id || '',
       status: row.status, comment: row.comment || '', createdAt: row.created_at || '',
     }),
+  },
+  // Planning partagé entre managers ("Tâches en attente") : des tâches
+  // administratives personnelles, séparées du système de tâches d'équipe —
+  // n'apparaissent jamais dans les vues Tâches/Projets/Planning du reste de
+  // l'équipe.
+  adminTasks: {
+    table: 'admin_tasks',
+    toRow: (t) => ({ id: t.id, title: t.title, importance: t.importance || 'normale', assignee_id: t.assigneeId || null, date: d(t.date), status: t.status || 'a_planifier', created_by: t.createdBy || null }),
+    fromRow: (r) => ({ id: r.id, title: r.title, importance: r.importance || 'normale', assigneeId: r.assignee_id || '', date: r.date || '', status: r.status || 'a_planifier', createdBy: r.created_by || '' }),
   },
 };
 
@@ -2173,9 +2182,12 @@ const isoOfDate = (d) => d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padS
 // Grille mensuelle générique — le contenu de chaque case (tâches/RDV pour
 // Planning, projets actifs ce jour-là pour Durée des projets...) est fourni
 // par renderDay(iso), pour réutiliser la même mise en page partout.
-function MonthCalendar({ year, month, onPrev, onNext, renderDay }) {
+function MonthCalendar({ year, month, onPrev, onNext, renderDay, onDayDrop }) {
   const cells = monthMatrix(year, month);
   const monthLabel = new Date(year, month, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  // onDayDrop, si fourni, rend chaque case de jour receveuse d'un
+  // glisser-déposer (voir AdminTasksView) — sans ça (usages existants de ce
+  // calendrier), les cases restent de simples conteneurs comme avant.
   return (
     <div className="bg-white rounded-2xl border border-slate-100 p-4">
       <div className="flex items-center justify-between mb-3">
@@ -2191,7 +2203,9 @@ function MonthCalendar({ year, month, onPrev, onNext, renderDay }) {
           const iso = isoOfDate(d);
           const today = iso === todayISO();
           return (
-            <div key={i} className={`min-h-[76px] rounded-lg border p-1 ${d ? 'border-slate-100' : 'border-transparent'} ${today ? 'bg-blue-50/50 border-blue-200' : ''}`}>
+            <div key={i} className={`min-h-[76px] rounded-lg border p-1 ${d ? 'border-slate-100' : 'border-transparent'} ${today ? 'bg-blue-50/50 border-blue-200' : ''}`}
+              onDragOver={onDayDrop && d ? (e) => e.preventDefault() : undefined}
+              onDrop={onDayDrop && d ? () => onDayDrop(iso) : undefined}>
               {d && <div className={`text-[10px] mb-1 ${today ? 'text-blue-600 font-semibold' : 'text-slate-400'}`}>{d.getDate()}</div>}
               <div className="space-y-0.5">{d && renderDay(iso)}</div>
             </div>
@@ -2397,6 +2411,106 @@ function SpanMonthCalendar({ year, month, items, onPrev, onNext, onOpenItem, get
     </div>
   );
 }
+/* ---------------------------------------------------------------------- */
+/*  Tâches en attente (planning partagé entre managers)                   */
+/* ---------------------------------------------------------------------- */
+
+function AdminTaskPill({ t, onDragStart, onToggleDone, onDelete }) {
+  const p = PRIORITIES.find(x => x.id === t.importance) || PRIORITIES[2];
+  const done = t.status === 'termine';
+  return (
+    <div draggable onDragStart={onDragStart}
+      className={`group flex items-center gap-1.5 rounded-lg px-2 py-1 border cursor-grab active:cursor-grabbing ${done ? 'opacity-50' : ''}`}
+      style={{ background: p.bg, borderColor: `${p.color}55` }}>
+      <button onClick={onToggleDone} className="shrink-0" title={done ? 'Marquer non terminée' : 'Marquer terminée'}>
+        {done ? <CheckCircle2 size={13} style={{ color: p.color }} /> : <span className="block w-3 h-3 rounded-full border-2" style={{ borderColor: p.color }} />}
+      </button>
+      <span className={`flex-1 min-w-0 truncate text-[11px] font-medium ${done ? 'line-through' : ''}`} style={{ color: p.color }}>{t.title}</span>
+      <button onClick={onDelete} className="opacity-0 group-hover:opacity-100 shrink-0 text-slate-400 hover:text-red-500"><X size={11} /></button>
+    </div>
+  );
+}
+
+// Planning partagé entre managers pour leurs tâches administratives
+// personnelles — séparé du système de tâches d'équipe (jamais visible
+// ailleurs dans l'app). Glisser-déposer une tâche depuis la liste centrale
+// "À planifier" vers un jour du calendrier de la personne concernée
+// l'assigne à cette date ; la redéposer dans la liste centrale l'en retire.
+function AdminTasksView({ adminTasks, members, currentMemberId, onSave, onDelete }) {
+  const managers = members.filter(m => m.accessLevel === 'manager');
+  const [cursor, setCursor] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
+  const [newTitle, setNewTitle] = useState('');
+  const [newImportance, setNewImportance] = useState('normale');
+  const [draggingId, setDraggingId] = useState(null);
+  const prevMonth = () => setCursor(c => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 });
+  const nextMonth = () => setCursor(c => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 });
+
+  const importanceRank = { urgente: 0, haute: 1, normale: 2, basse: 3 };
+  const unplanned = adminTasks.filter(t => !t.date)
+    .sort((a, b) => (importanceRank[a.importance] ?? 9) - (importanceRank[b.importance] ?? 9));
+
+  const addTask = () => {
+    if (!newTitle.trim()) return;
+    onSave({ id: uid(), title: newTitle.trim(), importance: newImportance, assigneeId: '', date: '', status: 'a_planifier', createdBy: currentMemberId });
+    setNewTitle('');
+  };
+  const assignToDay = (assigneeId, iso) => {
+    const t = adminTasks.find(x => x.id === draggingId);
+    setDraggingId(null);
+    if (!t) return;
+    onSave({ ...t, assigneeId, date: iso, status: t.status === 'termine' ? 'termine' : 'planifie' });
+  };
+  const unassign = () => {
+    const t = adminTasks.find(x => x.id === draggingId);
+    setDraggingId(null);
+    if (!t || (!t.assigneeId && !t.date)) return;
+    onSave({ ...t, assigneeId: '', date: '', status: t.status === 'termine' ? 'termine' : 'a_planifier' });
+  };
+  const toggleDone = (t) => onSave({ ...t, status: t.status === 'termine' ? (t.date ? 'planifie' : 'a_planifier') : 'termine' });
+
+  const managerColumn = (m) => (
+    <div key={m.id}>
+      <div className="text-sm font-semibold text-slate-700 mb-2 flex items-center gap-1.5"><Avatar name={m.name} size={18} />{m.name}</div>
+      <MonthCalendar year={cursor.year} month={cursor.month} onPrev={prevMonth} onNext={nextMonth}
+        onDayDrop={(iso) => assignToDay(m.id, iso)}
+        renderDay={(iso) => adminTasks.filter(t => t.assigneeId === m.id && t.date === iso).map(t => (
+          <AdminTaskPill key={t.id} t={t} onDragStart={() => setDraggingId(t.id)} onToggleDone={() => toggleDone(t)} onDelete={() => onDelete(t.id)} />
+        ))} />
+    </div>
+  );
+  const mid = Math.ceil(managers.length / 2) || 1;
+  const leftManagers = managers.slice(0, mid);
+  const rightManagers = managers.slice(mid);
+
+  return (
+    <div>
+      <div className="text-xs text-slate-400 mb-4">Planning partagé entre managers pour vos tâches administratives, séparé du reste de l'application. Glissez une tâche de la liste "À planifier" vers un jour du calendrier de la personne concernée ; redéposez-la au centre pour la retirer du planning.</div>
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px_minmax(0,1fr)] gap-4 items-start">
+        <div className="space-y-4">{leftManagers.map(managerColumn)}</div>
+        <div className="bg-white rounded-2xl border border-slate-100 p-4"
+          onDragOver={(e) => e.preventDefault()} onDrop={unassign}>
+          <div className="text-sm font-semibold text-slate-700 mb-3">À planifier</div>
+          <div className="flex items-center gap-1.5 mb-3">
+            <input value={newTitle} onChange={e => setNewTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addTask(); }}
+              placeholder="Nouvelle tâche…" className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+            <select value={newImportance} onChange={e => setNewImportance(e.target.value)} className="border border-slate-200 rounded-lg px-1.5 py-1.5 text-xs bg-white focus:outline-none">
+              {PRIORITIES.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+            <button onClick={addTask} disabled={!newTitle.trim()} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white p-1.5 rounded-lg shrink-0"><Plus size={14} /></button>
+          </div>
+          <div className="space-y-1.5 min-h-[80px]">
+            {unplanned.length === 0 && <div className="text-xs text-slate-400 text-center py-4">Rien en attente</div>}
+            {unplanned.map(t => (
+              <AdminTaskPill key={t.id} t={t} onDragStart={() => setDraggingId(t.id)} onToggleDone={() => toggleDone(t)} onDelete={() => onDelete(t.id)} />
+            ))}
+          </div>
+        </div>
+        <div className="space-y-4">{rightManagers.map(managerColumn)}</div>
+      </div>
+    </div>
+  );
+}
+
 function GanttView({ tasks, projects, members, openTask, onOpenProject }) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
   const [displayMode, setDisplayMode] = useState('project'); // 'project' | 'task'
@@ -3016,6 +3130,7 @@ function navFor(perm) {
     nav.push({ id: 'gantt', label: 'Durée des projets', Icon: GanttChartSquare, accent: '#A78BFA' });
   }
   if (perm.isManager) {
+    nav.push({ id: 'admin_tasks', label: 'Tâches en attente', Icon: ListTodo, accent: '#14B8A6' });
     nav.push({ id: 'team', label: 'Équipe', Icon: Users, accent: '#F472B6' });
     nav.push({ id: 'contacts', label: 'Contacts externes', Icon: Building2, accent: '#C084FC' });
   }
@@ -3041,6 +3156,7 @@ function ReferentApp({ session, onSignOut }) {
   const [orgNodes, setOrgNodes] = useState([]);
   const [orgAssignments, setOrgAssignments] = useState([]);
   const [transmissions, setTransmissions] = useState([]);
+  const [adminTasks, setAdminTasks] = useState([]);
   const [view, setView] = useState('tasks');
   const [connectedAs, setConnectedAs] = useState('');
   const [taskModal, setTaskModal] = useState(null);
@@ -3077,6 +3193,7 @@ function ReferentApp({ session, onSignOut }) {
       let on = data.orgNodes.items, oa = data.orgAssignments.items;
       setMembers(m); setProjects(p); setTasks(t); setAppointments(a); setExternalContacts(ec); setTaskRequests(tr);
       setTransmissions(data.transmissions.items);
+      setAdminTasks(data.adminTasks.items);
       const matched = m.find(x => (x.email || '').toLowerCase() === myEmail);
       // Squelette par défaut de l'organigramme, créé une seule fois par un
       // administrateur si la table est encore vide.
@@ -3250,6 +3367,20 @@ function ReferentApp({ session, onSignOut }) {
         `<p><strong>${escapeHtml(currentMember?.name || 'Quelqu\'un')}</strong> a laissé un message dans la transmission <strong>${escapeHtml(channelLabel)}</strong> :</p><p>${escapeHtml(message).replace(/\n/g, '<br/>')}</p>`);
       warnIfFailed(queued, "La notification par email de ce message");
     }
+  };
+
+  // "Tâches en attente" : planning partagé entre managers, séparé du système
+  // de tâches d'équipe. saveAdminTask sert à la fois à créer, déplacer
+  // (glisser-déposer sur un jour ou vers la liste non planifiée) et cocher
+  // terminé — toujours le même upsert, seuls les champs modifiés diffèrent.
+  const saveAdminTask = async (t) => {
+    const exists = adminTasks.some(x => x.id === t.id);
+    setAdminTasks(prev => exists ? prev.map(x => x.id === t.id ? t : x) : [...prev, t]);
+    warnIfFailed(await upsertRow('adminTasks', t), 'La tâche');
+  };
+  const deleteAdminTask = async (id) => {
+    setAdminTasks(prev => prev.filter(x => x.id !== id));
+    warnIfFailed(await deleteRow('adminTasks', id), 'La suppression de la tâche');
   };
 
   // Organigramme : boîtes hiérarchiques (org_nodes) + personnes placées
@@ -3987,6 +4118,7 @@ function ReferentApp({ session, onSignOut }) {
           {view === 'planning' && <PlanningView members={members} tasks={scopedTasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
           {view === 'transmissions' && <TransmissionsView transmissions={transmissions} members={members} currentMemberId={connectedAs} channelLastSeen={channelLastSeen} onMarkChannelSeen={markChannelSeen} onPost={postTransmission} />}
           {view === 'gantt' && <GanttView tasks={scopedTasks} members={members} projects={scopedProjects} openTask={(t) => setTaskModal({ task: t })} onOpenProject={(p) => setProjectModal({ project: p })} />}
+          {view === 'admin_tasks' && <AdminTasksView adminTasks={adminTasks} members={members} currentMemberId={connectedAs} onSave={saveAdminTask} onDelete={deleteAdminTask} />}
           {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} onImport={importMembers} />}
           {view === 'contacts' && <ContactsView contacts={externalContacts} perm={perm} editContact={(c) => setContactModal({ contact: c })} newContact={() => setContactModal({ contact: null })} />}
           {view === 'orgchart' && <OrgChartView nodes={orgNodes} assignments={orgAssignments} members={members} externalContacts={externalContacts} perm={perm}

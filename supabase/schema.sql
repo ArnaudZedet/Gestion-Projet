@@ -148,6 +148,19 @@ create table if not exists transmissions (
   created_at timestamptz not null default now()
 );
 
+-- Planning partagé entre managers ("Tâches en attente") : tâches
+-- administratives personnelles, séparées du système de tâches d'équipe.
+create table if not exists admin_tasks (
+  id text primary key,
+  title text not null,
+  importance text not null default 'normale',
+  assignee_id text,
+  date date,
+  status text not null default 'a_planifier',
+  created_by text,
+  updated_at timestamptz not null default now()
+);
+
 -- File d'attente des notifications par email : chaque notification (affectation
 -- à un projet, tâche assignée, rotation de responsable...) est déposée ici au
 -- lieu d'être envoyée immédiatement, puis regroupée en un seul email par
@@ -167,7 +180,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['members','projects','tasks','appointments','external_contacts','task_requests','notification_queue','org_nodes','org_assignments','transmissions']
+  foreach t in array array['members','projects','tasks','appointments','external_contacts','task_requests','notification_queue','org_nodes','org_assignments','transmissions','admin_tasks']
   loop
     execute format('alter table %I enable row level security;', t);
     execute format('drop policy if exists "authenticated all" on %I;', t);

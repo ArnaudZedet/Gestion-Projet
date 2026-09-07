@@ -397,8 +397,8 @@ const ROW_MAPPERS = {
   // l'équipe.
   adminTasks: {
     table: 'admin_tasks',
-    toRow: (t) => ({ id: t.id, title: t.title, importance: t.importance || 'normale', assignee_id: t.assigneeId || null, date: d(t.date), status: t.status || 'a_planifier', created_by: t.createdBy || null }),
-    fromRow: (r) => ({ id: r.id, title: r.title, importance: r.importance || 'normale', assigneeId: r.assignee_id || '', date: r.date || '', status: r.status || 'a_planifier', createdBy: r.created_by || '' }),
+    toRow: (t) => ({ id: t.id, title: t.title, importance: t.importance || 'normale', assignee_id: t.assigneeId || null, date: d(t.date), end_date: d(t.endDate), status: t.status || 'a_planifier', late_notified_at: t.lateNotifiedAt || null, due_reminder_sent: !!t.dueReminderSent, created_by: t.createdBy || null }),
+    fromRow: (r) => ({ id: r.id, title: r.title, importance: r.importance || 'normale', assigneeId: r.assignee_id || '', date: r.date || '', endDate: r.end_date || '', status: r.status || 'a_planifier', lateNotifiedAt: r.late_notified_at || null, dueReminderSent: !!r.due_reminder_sent, createdBy: r.created_by || '' }),
   },
 };
 
@@ -2420,19 +2420,78 @@ function SpanMonthCalendar({ year, month, items, onPrev, onNext, onOpenItem, get
 /*  Tâches en attente (planning partagé entre managers)                   */
 /* ---------------------------------------------------------------------- */
 
-function AdminTaskPill({ t, onDragStart, onToggleDone, onDelete }) {
-  const p = PRIORITIES.find(x => x.id === t.importance) || PRIORITIES[2];
+// Une tâche terminée passe en vert (couleur "Terminé" déjà utilisée partout
+// ailleurs pour les statuts) plutôt que de simplement s'estomper — plus
+// facile à repérer d'un coup d'œil dans le calendrier.
+function AdminTaskPill({ t, onDragStart, onToggleDone, onOpen }) {
   const done = t.status === 'termine';
+  const p = done ? STATUSES.find(s => s.id === 'termine') : (PRIORITIES.find(x => x.id === t.importance) || PRIORITIES[2]);
+  const spanning = t.date && t.endDate && t.endDate !== t.date;
   return (
-    <div draggable onDragStart={onDragStart}
-      className={`group flex items-center gap-1.5 rounded-lg px-2 py-1 border cursor-grab active:cursor-grabbing ${done ? 'opacity-50' : ''}`}
-      style={{ background: p.bg, borderColor: `${p.color}55` }}>
-      <button onClick={onToggleDone} className="shrink-0" title={done ? 'Marquer non terminée' : 'Marquer terminée'}>
+    <div draggable onDragStart={onDragStart} onClick={onOpen}
+      className="flex items-center gap-1.5 rounded-lg px-2 py-1 border cursor-grab active:cursor-grabbing hover:brightness-95"
+      style={{ background: p.bg, borderColor: `${p.color}66` }}>
+      <button onClick={(e) => { e.stopPropagation(); onToggleDone(); }} className="shrink-0" title={done ? 'Marquer non terminée' : 'Marquer terminée'}>
         {done ? <CheckCircle2 size={13} style={{ color: p.color }} /> : <span className="block w-3 h-3 rounded-full border-2" style={{ borderColor: p.color }} />}
       </button>
-      <span className={`flex-1 min-w-0 truncate text-[11px] font-medium ${done ? 'line-through' : ''}`} style={{ color: p.color }}>{t.title}</span>
-      <button onClick={onDelete} className="opacity-0 group-hover:opacity-100 shrink-0 text-slate-400 hover:text-red-500"><X size={11} /></button>
+      <span className={`flex-1 min-w-0 truncate text-[11px] font-medium ${done ? 'line-through' : ''}`} style={{ color: p.color }}>
+        {spanning && <Repeat size={9} className="inline mr-1 -mt-0.5" />}{t.title}
+      </span>
     </div>
+  );
+}
+
+// Édition d'une tâche manager : cliquer sur une tâche (dans "À planifier" ou
+// dans un calendrier) ouvre cette fiche — c'est ici qu'on l'étale sur
+// plusieurs jours (date de fin) plutôt qu'un simple jour unique posé par
+// glisser-déposer.
+function AdminTaskModal({ task, managers, onSave, onDelete, onClose }) {
+  const [form, setForm] = useState(task);
+  const done = form.status === 'termine';
+  const doSave = () => {
+    if (!form.title.trim()) return;
+    const status = done ? 'termine' : (form.date ? 'planifie' : 'a_planifier');
+    onSave({ ...form, title: form.title.trim(), endDate: form.date ? (form.endDate || form.date) : '', status });
+    onClose();
+  };
+  return (
+    <Modal title="Tâche manager" onClose={onClose}>
+      <Field label="Titre">
+        <input className={inputCls} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} />
+      </Field>
+      <Field label="Importance">
+        <select className={inputCls} value={form.importance} onChange={e => setForm({ ...form, importance: e.target.value })}>
+          {PRIORITIES.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+        </select>
+      </Field>
+      <Field label="Assignée à">
+        <select className={inputCls} value={form.assigneeId} onChange={e => setForm({ ...form, assigneeId: e.target.value })}>
+          <option value="">— non assignée —</option>
+          {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </select>
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Du">
+          <input type="date" className={inputCls} value={form.date || ''}
+            onChange={e => setForm({ ...form, date: e.target.value, endDate: form.endDate && form.endDate < e.target.value ? e.target.value : form.endDate })} />
+        </Field>
+        <Field label="Au (pour étaler sur plusieurs jours)">
+          <input type="date" className={inputCls} min={form.date || undefined} disabled={!form.date} value={form.endDate || form.date || ''}
+            onChange={e => setForm({ ...form, endDate: e.target.value })} />
+        </Field>
+      </div>
+      <label className="flex items-center gap-2 text-sm text-slate-600 mb-4">
+        <input type="checkbox" checked={done} onChange={e => setForm({ ...form, status: e.target.checked ? 'termine' : (form.date ? 'planifie' : 'a_planifier') })} />
+        Terminée
+      </label>
+      <div className="flex items-center justify-between">
+        <ConfirmButton onConfirm={() => { onDelete(form.id); onClose(); }} confirmLabel="Supprimer cette tâche ?" />
+        <div className="flex gap-2">
+          <button onClick={onClose} className="text-slate-500 hover:bg-slate-50 text-sm font-medium px-3 py-2 rounded-lg">Annuler</button>
+          <button onClick={doSave} disabled={!form.title.trim()} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">Enregistrer</button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -2447,6 +2506,7 @@ function AdminTasksView({ adminTasks, members, currentMemberId, onSave, onDelete
   const [newTitle, setNewTitle] = useState('');
   const [newImportance, setNewImportance] = useState('normale');
   const [draggingId, setDraggingId] = useState(null);
+  const [editing, setEditing] = useState(null);
   const prevMonth = () => setCursor(c => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 });
   const nextMonth = () => setCursor(c => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 });
 
@@ -2456,30 +2516,34 @@ function AdminTasksView({ adminTasks, members, currentMemberId, onSave, onDelete
 
   const addTask = () => {
     if (!newTitle.trim()) return;
-    onSave({ id: uid(), title: newTitle.trim(), importance: newImportance, assigneeId: '', date: '', status: 'a_planifier', createdBy: currentMemberId });
+    onSave({ id: uid(), title: newTitle.trim(), importance: newImportance, assigneeId: '', date: '', endDate: '', status: 'a_planifier', createdBy: currentMemberId });
     setNewTitle('');
   };
+  // Glisser-déposer pose toujours un seul jour (même pour une tâche qui
+  // s'étalait déjà sur plusieurs) — pour l'étaler sur une période, on passe
+  // par la fiche (clic sur la tâche, voir AdminTaskModal).
   const assignToDay = (assigneeId, iso) => {
     const t = adminTasks.find(x => x.id === draggingId);
     setDraggingId(null);
     if (!t) return;
-    onSave({ ...t, assigneeId, date: iso, status: t.status === 'termine' ? 'termine' : 'planifie' });
+    onSave({ ...t, assigneeId, date: iso, endDate: iso, status: t.status === 'termine' ? 'termine' : 'planifie' });
   };
   const unassign = () => {
     const t = adminTasks.find(x => x.id === draggingId);
     setDraggingId(null);
     if (!t || (!t.assigneeId && !t.date)) return;
-    onSave({ ...t, assigneeId: '', date: '', status: t.status === 'termine' ? 'termine' : 'a_planifier' });
+    onSave({ ...t, assigneeId: '', date: '', endDate: '', status: t.status === 'termine' ? 'termine' : 'a_planifier' });
   };
   const toggleDone = (t) => onSave({ ...t, status: t.status === 'termine' ? (t.date ? 'planifie' : 'a_planifier') : 'termine' });
+  const inRange = (t, iso) => !!t.date && iso >= t.date && iso <= (t.endDate || t.date);
 
   const managerColumn = (m) => (
     <div key={m.id}>
       <div className="text-sm font-semibold text-slate-700 mb-2 flex items-center gap-1.5"><Avatar name={m.name} size={18} />{m.name}</div>
       <MonthCalendar year={cursor.year} month={cursor.month} onPrev={prevMonth} onNext={nextMonth} hideWeekends
         onDayDrop={(iso) => assignToDay(m.id, iso)}
-        renderDay={(iso) => adminTasks.filter(t => t.assigneeId === m.id && t.date === iso).map(t => (
-          <AdminTaskPill key={t.id} t={t} onDragStart={() => setDraggingId(t.id)} onToggleDone={() => toggleDone(t)} onDelete={() => onDelete(t.id)} />
+        renderDay={(iso) => adminTasks.filter(t => t.assigneeId === m.id && inRange(t, iso)).map(t => (
+          <AdminTaskPill key={t.id} t={t} onDragStart={() => setDraggingId(t.id)} onToggleDone={() => toggleDone(t)} onOpen={() => setEditing(t)} />
         ))} />
     </div>
   );
@@ -2489,7 +2553,7 @@ function AdminTasksView({ adminTasks, members, currentMemberId, onSave, onDelete
 
   return (
     <div>
-      <div className="text-xs text-slate-400 mb-4">Planning partagé entre managers pour vos tâches administratives, séparé du reste de l'application. Glissez une tâche de la liste "À planifier" vers un jour du calendrier de la personne concernée ; redéposez-la au centre pour la retirer du planning.</div>
+      <div className="text-xs text-slate-400 mb-4">Planning partagé entre managers pour vos tâches administratives, séparé du reste de l'application. Glissez une tâche de la liste "À planifier" vers un jour du calendrier de la personne concernée ; cliquez sur une tâche pour l'étaler sur plusieurs jours, la réassigner ou la supprimer ; redéposez-la au centre pour la retirer du planning.</div>
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px_minmax(0,1fr)] gap-4 items-start">
         <div className="space-y-4">{leftManagers.map(managerColumn)}</div>
         <div className="bg-white rounded-2xl border border-slate-100 p-4"
@@ -2506,12 +2570,13 @@ function AdminTasksView({ adminTasks, members, currentMemberId, onSave, onDelete
           <div className="space-y-1.5 min-h-[80px]">
             {unplanned.length === 0 && <div className="text-xs text-slate-400 text-center py-4">Rien en attente</div>}
             {unplanned.map(t => (
-              <AdminTaskPill key={t.id} t={t} onDragStart={() => setDraggingId(t.id)} onToggleDone={() => toggleDone(t)} onDelete={() => onDelete(t.id)} />
+              <AdminTaskPill key={t.id} t={t} onDragStart={() => setDraggingId(t.id)} onToggleDone={() => toggleDone(t)} onOpen={() => setEditing(t)} />
             ))}
           </div>
         </div>
         <div className="space-y-4">{rightManagers.map(managerColumn)}</div>
       </div>
+      {editing && <AdminTaskModal task={editing} managers={managers} onSave={onSave} onDelete={onDelete} onClose={() => setEditing(null)} />}
     </div>
   );
 }
@@ -3378,9 +3443,15 @@ function ReferentApp({ session, onSignOut }) {
   // de tâches d'équipe. saveAdminTask sert à la fois à créer, déplacer
   // (glisser-déposer sur un jour ou vers la liste non planifiée) et cocher
   // terminé — toujours le même upsert, seuls les champs modifiés diffèrent.
-  const saveAdminTask = async (t) => {
+  const saveAdminTask = async (tInput) => {
+    const prev = adminTasks.find(x => x.id === tInput.id);
+    // Si la date (ou la période) change, on réarme les rappels pour qu'ils
+    // puissent repartir sur la nouvelle échéance — sinon un rappel "en
+    // retard" déjà envoyé une fois ne repartirait jamais après un report.
+    const dateChanged = prev && (prev.date !== tInput.date || prev.endDate !== tInput.endDate);
+    const t = dateChanged ? { ...tInput, lateNotifiedAt: null, dueReminderSent: false } : tInput;
     const exists = adminTasks.some(x => x.id === t.id);
-    setAdminTasks(prev => exists ? prev.map(x => x.id === t.id ? t : x) : [...prev, t]);
+    setAdminTasks(prevList => exists ? prevList.map(x => x.id === t.id ? t : x) : [...prevList, t]);
     warnIfFailed(await upsertRow('adminTasks', t), 'La tâche');
   };
   const deleteAdminTask = async (id) => {

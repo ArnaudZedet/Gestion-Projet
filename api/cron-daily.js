@@ -41,7 +41,7 @@ function prevBusinessDay(dateStr) {
 
 // Tourne une fois par jour à 7h heure de Paris (voir vercel.json — l'heure
 // UTC choisie tient compte du changement heure été/hiver à ±1h près).
-// Fait quatre choses, regroupées dans le même cron pour rester dans la
+// Fait cinq choses, regroupées dans le même cron pour rester dans la
 // limite de 2 tâches planifiées du plan Vercel Hobby :
 //
 // 1. Alerte manager sur les projets en retard (une seule fois par projet,
@@ -52,14 +52,17 @@ function prevBusinessDay(dateStr) {
 // 3. Rappel au(x) responsable(s) d'un projet qui se termine aujourd'hui
 //    même, pour penser à le marquer "Terminé" (une seule fois par cycle —
 //    voir end_reminder_sent).
-// 4. Envoi groupé des notifications en attente (affectation à un projet,
+// 4. Rappel sur les tâches du planning manager ("Tâches Managers") :
+//    prévues aujourd'hui même (due_reminder_sent) ou en retard, jamais
+//    marquées terminées (late_notified_at) — chacun une seule fois.
+// 5. Envoi groupé des notifications en attente (affectation à un projet,
 //    tâche assignée, rotation de responsable, rappels...) : un seul email
 //    par destinataire, listant tout ce qui s'est accumulé depuis le
 //    dernier envoi, au lieu d'un email à chaque événement.
 export default async function handler(req, res) {
   if (!requireCron(req)) return res.status(401).json({ error: 'Non autorisé' });
 
-  const result = { lateProjects: 0, startReminders: 0, endReminders: 0, digestRecipients: 0, digestNotifications: 0 };
+  const result = { lateProjects: 0, startReminders: 0, endReminders: 0, adminTaskReminders: 0, digestRecipients: 0, digestNotifications: 0 };
 
   try {
     // --- 1. Projets en retard ---
@@ -164,7 +167,69 @@ export default async function handler(req, res) {
       result.endReminders = endingProjects.length;
     }
 
-    // --- 4. Envoi groupé des notifications en attente ---
+    // --- 4. Rappels "Tâches Managers" (jour même, et en retard) ---
+    const { data: dueAdminTasks, error: dueErr } = await supabaseAdmin
+      .from('admin_tasks')
+      .select('id, title, assignee_id')
+      .eq('date', today)
+      .neq('status', 'termine')
+      .eq('due_reminder_sent', false);
+    if (dueErr) throw new Error(dueErr.message);
+
+    const { data: lateAdminTasks, error: lateAdminErr } = await supabaseAdmin
+      .from('admin_tasks')
+      .select('id, title, date, assignee_id')
+      .lt('date', today)
+      .neq('status', 'termine')
+      .is('late_notified_at', null)
+      .not('date', 'is', null);
+    if (lateAdminErr) throw new Error(lateAdminErr.message);
+
+    const allAdminTasks = [...(dueAdminTasks || []), ...(lateAdminTasks || [])];
+    if (allAdminTasks.length > 0) {
+      const assigneeIds = [...new Set(allAdminTasks.map((t) => t.assignee_id).filter(Boolean))];
+      if (assigneeIds.length) {
+        const { data: resp, error: respErr } = await supabaseAdmin.from('members').select('id, name, email').in('id', assigneeIds);
+        if (respErr) throw new Error(respErr.message);
+        const membersById = Object.fromEntries((resp || []).map((m) => [m.id, m]));
+        const queueRows = [];
+        (dueAdminTasks || []).forEach((t) => {
+          const rm = membersById[t.assignee_id];
+          if (rm?.email) {
+            queueRows.push({
+              id: crypto.randomUUID(),
+              recipient_email: rm.email,
+              subject: `Tâche prévue aujourd'hui : ${t.title}`,
+              html: `<p>Bonjour ${escapeHtml(rm.name)},</p><p>La tâche <strong>${escapeHtml(t.title)}</strong> est prévue aujourd'hui dans votre planning manager.</p>`,
+            });
+          }
+        });
+        (lateAdminTasks || []).forEach((t) => {
+          const rm = membersById[t.assignee_id];
+          if (rm?.email) {
+            queueRows.push({
+              id: crypto.randomUUID(),
+              recipient_email: rm.email,
+              subject: `Tâche non faite : ${t.title}`,
+              html: `<p>Bonjour ${escapeHtml(rm.name)},</p><p>La tâche <strong>${escapeHtml(t.title)}</strong>, prévue le ${t.date}, n'a pas été marquée terminée.</p>`,
+            });
+          }
+        });
+        if (queueRows.length) {
+          const { error: insErr } = await supabaseAdmin.from('notification_queue').insert(queueRows);
+          if (insErr) throw new Error(insErr.message);
+        }
+      }
+      if (dueAdminTasks && dueAdminTasks.length) {
+        await supabaseAdmin.from('admin_tasks').update({ due_reminder_sent: true }).in('id', dueAdminTasks.map((t) => t.id));
+      }
+      if (lateAdminTasks && lateAdminTasks.length) {
+        await supabaseAdmin.from('admin_tasks').update({ late_notified_at: new Date().toISOString() }).in('id', lateAdminTasks.map((t) => t.id));
+      }
+      result.adminTaskReminders = allAdminTasks.length;
+    }
+
+    // --- 5. Envoi groupé des notifications en attente ---
     const { data: queued, error: qErr } = await supabaseAdmin
       .from('notification_queue')
       .select('*')

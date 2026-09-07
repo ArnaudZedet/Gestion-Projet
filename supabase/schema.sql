@@ -156,7 +156,10 @@ create table if not exists admin_tasks (
   importance text not null default 'normale',
   assignee_id text,
   date date,
+  end_date date,
   status text not null default 'a_planifier',
+  late_notified_at timestamptz,
+  due_reminder_sent boolean not null default false,
   created_by text,
   updated_at timestamptz not null default now()
 );

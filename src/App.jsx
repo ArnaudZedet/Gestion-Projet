@@ -60,6 +60,12 @@ const isImportant = (t) => t.importance === 'critique' || t.importance === 'elev
 const PROJECT_COLORS = ['#2563EB', '#0D9488', '#B54708', '#7C3AED', '#B42318', '#0369A1', '#4D7C0F'];
 const FUNCTIONS = ['Manipulateur', 'Secrétaire', 'Aide manipulateur', 'Médecin', 'Échographiste', 'Manager'];
 const SERVICES = ['Radio', 'Scanner', 'IRM'];
+// Les 6 canaux de transmission (Secrétaires/Manipulateurs × service) — liste
+// unique partagée entre TransmissionsView et le calcul des badges non-lus.
+const TRANSMISSION_CHANNELS = [
+  ...SERVICES.map(s => ({ service: s, functionGroup: 'Secrétaire', label: `Secrétaires ${s}` })),
+  ...SERVICES.map(s => ({ service: s, functionGroup: 'Manipulateur', label: `Manipulateurs ${s}` })),
+];
 // Service d'un projet (distinct des services d'un collaborateur, qui peut en
 // avoir plusieurs) — un projet a un seul service parmi ceux-ci, "Autre" inclus.
 const PROJECT_SERVICES = ['Radio', 'Scanner', 'IRM', 'Autre'];
@@ -2602,16 +2608,20 @@ function PrioritisationView({ projects, members, onOpenProject }) {
 /*  Transmissions                                                         */
 /* ---------------------------------------------------------------------- */
 
-function TransmissionsView({ transmissions, members, currentMemberId, lastSeen, onPost }) {
-  const channels = [
-    ...SERVICES.map(s => ({ service: s, functionGroup: 'Secrétaire', label: `Secrétaires ${s}` })),
-    ...SERVICES.map(s => ({ service: s, functionGroup: 'Manipulateur', label: `Manipulateurs ${s}` })),
-  ];
+function TransmissionsView({ transmissions, members, currentMemberId, channelLastSeen, onMarkChannelSeen, onPost }) {
+  const channels = TRANSMISSION_CHANNELS;
   const currentMemberObj = members.find(m => m.id === currentMemberId);
   const myChannel = channels.find(c => (currentMemberObj?.services || []).includes(c.service) &&
     (currentMemberObj?.role === c.functionGroup || (c.functionGroup === 'Manipulateur' && currentMemberObj?.role === 'Aide manipulateur')));
   const [selected, setSelected] = useState(myChannel || channels[0]);
   const [message, setMessage] = useState('');
+  // Un canal est marqué "lu" dès qu'on l'affiche (au premier rendu et à
+  // chaque changement), plutôt qu'à la fermeture de tout l'onglet
+  // Transmissions — ça marche même si on ferme l'app ou qu'on recharge la
+  // page sans être passé par un autre onglet du menu avant.
+  useEffect(() => {
+    onMarkChannelSeen(selected.service, selected.functionGroup);
+  }, [selected.service, selected.functionGroup]);
   const channelMsgs = transmissions
     .filter(t => t.service === selected.service && t.functionGroup === selected.functionGroup)
     .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
@@ -2627,11 +2637,12 @@ function TransmissionsView({ transmissions, members, currentMemberId, lastSeen, 
         {channels.map(c => {
           const active = selected.service === c.service && selected.functionGroup === c.functionGroup;
           const color = SERVICE_COLORS[c.service] || '#64748B';
-          // Nombre de messages non lus (depuis la dernière ouverture de
-          // l'onglet), pas le total depuis toujours — sinon ce chiffre ne
-          // redescend jamais à zéro une fois qu'un canal a reçu un message.
+          // Nombre de messages non lus depuis la dernière fois où CE canal
+          // précis a été ouvert (pas le total depuis toujours, et pas la
+          // dernière visite de l'onglet Transmissions en général).
+          const seenAt = channelLastSeen[`${c.service}|${c.functionGroup}`];
           const count = transmissions.filter(t => t.service === c.service && t.functionGroup === c.functionGroup &&
-            t.authorId !== currentMemberId && (!lastSeen || t.createdAt > lastSeen)).length;
+            t.authorId !== currentMemberId && (!seenAt || t.createdAt > seenAt)).length;
           return (
             <button key={`${c.functionGroup}-${c.service}`} onClick={() => setSelected(c)}
               className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm border font-medium"
@@ -3104,7 +3115,10 @@ function ReferentApp({ session, onSignOut }) {
   const [requestModal, setRequestModal] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const [hoveredNav, setHoveredNav] = useState('');
-  const [transmissionsLastSeen, setTransmissionsLastSeen] = useState('');
+  // Dernière ouverture de chaque canal de transmission, par personne — une
+  // entrée par canal (service|métier), pas une seule valeur globale, pour
+  // que le compteur de chaque canal se base sur sa propre dernière lecture.
+  const [channelLastSeen, setChannelLastSeen] = useState({});
   const [toasts, setToasts] = useState([]);
 
   useEffect(() => {
@@ -3176,26 +3190,35 @@ function ReferentApp({ session, onSignOut }) {
       if (matched) {
         setConnectedAs(matched.id);
         setView(matched.accessLevel === 'manager' ? 'dashboard' : 'tasks');
-        setTransmissionsLastSeen(localStorage.getItem(`transmissions_last_seen_${matched.id}`) || '');
+        const seenMap = {};
+        TRANSMISSION_CHANNELS.forEach(c => {
+          const key = `${c.service}|${c.functionGroup}`;
+          seenMap[key] = localStorage.getItem(`transmissions_last_seen_${matched.id}_${key}`) || '';
+        });
+        setChannelLastSeen(seenMap);
       } else { setNotRecognized(true); }
       setLoading(false);
     })();
   }, []);
 
-  // Petit badge sur l'onglet Transmissions : nombre de messages postés par
-  // d'autres depuis la dernière visite de cet onglet (mémorisé localement).
-  // La remise à zéro se fait en QUITTANT l'onglet, pas en y entrant : sinon
-  // le chiffre par canal (dans TransmissionsView) retombe à zéro avant même
-  // que la personne ait pu voir quel canal était concerné.
-  useEffect(() => {
-    if (view !== 'transmissions' || !connectedAs) return;
-    return () => {
-      const now = new Date().toISOString();
-      localStorage.setItem(`transmissions_last_seen_${connectedAs}`, now);
-      setTransmissionsLastSeen(now);
-    };
-  }, [view, connectedAs]);
-  const unreadTransmissions = transmissions.filter(t => t.authorId !== connectedAs && (!transmissionsLastSeen || t.createdAt > transmissionsLastSeen)).length;
+  // Un canal de transmission est marqué "lu" dès qu'on l'affiche (voir
+  // TransmissionsView), pas quand on quitte l'onglet Transmissions dans son
+  // ensemble — ça marche même si on ferme l'app ou recharge la page sans
+  // être passé par un autre onglet du menu avant.
+  const markChannelSeen = (service, functionGroup) => {
+    if (!connectedAs) return;
+    const key = `${service}|${functionGroup}`;
+    const now = new Date().toISOString();
+    localStorage.setItem(`transmissions_last_seen_${connectedAs}_${key}`, now);
+    setChannelLastSeen(prev => ({ ...prev, [key]: now }));
+  };
+  // Petit badge sur l'onglet Transmissions : somme des non-lus de chaque
+  // canal, chacun avec sa propre dernière lecture.
+  const unreadTransmissions = TRANSMISSION_CHANNELS.reduce((sum, c) => {
+    const seenAt = channelLastSeen[`${c.service}|${c.functionGroup}`];
+    return sum + transmissions.filter(t => t.service === c.service && t.functionGroup === c.functionGroup &&
+      t.authorId !== connectedAs && (!seenAt || t.createdAt > seenAt)).length;
+  }, 0);
 
   // Une tâche "Programmée" passe seule à "En cours" dès que sa date de
   // début est atteinte — pas besoin d'y repenser pour la démarrer.
@@ -4026,7 +4049,7 @@ function ReferentApp({ session, onSignOut }) {
           {view === 'dashboard' && <Dashboard tasks={tasks} members={members} projects={projects} appointments={appointments} connectedAs={connectedAs} openTask={(t) => setTaskModal({ task: t })} onClaim={claimTask} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'tasks' && <TasksView tasks={scopedTasks} members={members} projects={scopedProjects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={(projectId) => setTaskModal({ task: null, presetProjectId: projectId })} newProject={() => setProjectModal({ project: null })} editProject={(p) => setProjectModal({ project: p })} />}
           {view === 'planning' && <PlanningView members={members} tasks={scopedTasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
-          {view === 'transmissions' && <TransmissionsView transmissions={transmissions} members={members} currentMemberId={connectedAs} lastSeen={transmissionsLastSeen} onPost={postTransmission} />}
+          {view === 'transmissions' && <TransmissionsView transmissions={transmissions} members={members} currentMemberId={connectedAs} channelLastSeen={channelLastSeen} onMarkChannelSeen={markChannelSeen} onPost={postTransmission} />}
           {view === 'gantt' && <GanttView tasks={scopedTasks} members={members} projects={scopedProjects} openTask={(t) => setTaskModal({ task: t })} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'priorisation' && <PrioritisationView projects={scopedProjects} members={members} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} onImport={importMembers} />}

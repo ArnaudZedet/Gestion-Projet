@@ -2507,12 +2507,18 @@ function AdminTasksView({ adminTasks, members, currentMemberId, onSave, onDelete
   const [newImportance, setNewImportance] = useState('normale');
   const [draggingId, setDraggingId] = useState(null);
   const [editing, setEditing] = useState(null);
+  // Comme pour les projets (Tâches et projets) : on ouvre toujours sur "En
+  // cours", les tâches terminées sont rangées à part pour ne pas encombrer
+  // le planning au quotidien.
+  const [statusTab, setStatusTab] = useState('en_cours');
   const prevMonth = () => setCursor(c => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 });
   const nextMonth = () => setCursor(c => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 });
 
   const importanceRank = { urgente: 0, haute: 1, normale: 2, basse: 3 };
-  const unplanned = adminTasks.filter(t => !t.date)
+  const unplanned = adminTasks.filter(t => !t.date && t.status !== 'termine')
     .sort((a, b) => (importanceRank[a.importance] ?? 9) - (importanceRank[b.importance] ?? 9));
+  const doneTasks = adminTasks.filter(t => t.status === 'termine')
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   const addTask = () => {
     if (!newTitle.trim()) return;
@@ -2542,7 +2548,7 @@ function AdminTasksView({ adminTasks, members, currentMemberId, onSave, onDelete
       <div className="text-sm font-semibold text-slate-700 mb-2 flex items-center gap-1.5"><Avatar name={m.name} size={18} />{m.name}</div>
       <MonthCalendar year={cursor.year} month={cursor.month} onPrev={prevMonth} onNext={nextMonth} hideWeekends
         onDayDrop={(iso) => assignToDay(m.id, iso)}
-        renderDay={(iso) => adminTasks.filter(t => t.assigneeId === m.id && inRange(t, iso)).map(t => (
+        renderDay={(iso) => adminTasks.filter(t => t.assigneeId === m.id && inRange(t, iso) && t.status !== 'termine').map(t => (
           <AdminTaskPill key={t.id} t={t} onDragStart={() => setDraggingId(t.id)} onToggleDone={() => toggleDone(t)} onOpen={() => setEditing(t)} />
         ))} />
     </div>
@@ -2553,29 +2559,62 @@ function AdminTasksView({ adminTasks, members, currentMemberId, onSave, onDelete
 
   return (
     <div>
-      <div className="text-xs text-slate-400 mb-4">Planning partagé entre managers pour vos tâches administratives, séparé du reste de l'application. Glissez une tâche de la liste "À planifier" vers un jour du calendrier de la personne concernée ; cliquez sur une tâche pour l'étaler sur plusieurs jours, la réassigner ou la supprimer ; redéposez-la au centre pour la retirer du planning.</div>
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px_minmax(0,1fr)] gap-4 items-start">
-        <div className="space-y-4">{leftManagers.map(managerColumn)}</div>
-        <div className="bg-white rounded-2xl border border-slate-100 p-4"
-          onDragOver={(e) => e.preventDefault()} onDrop={unassign}>
-          <div className="text-sm font-semibold text-slate-700 mb-3">À planifier</div>
-          <div className="flex items-center gap-1.5 mb-3">
-            <input value={newTitle} onChange={e => setNewTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addTask(); }}
-              placeholder="Nouvelle tâche…" className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
-            <select value={newImportance} onChange={e => setNewImportance(e.target.value)} className="border border-slate-200 rounded-lg px-1.5 py-1.5 text-xs bg-white focus:outline-none">
-              {PRIORITIES.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-            </select>
-            <button onClick={addTask} disabled={!newTitle.trim()} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white p-1.5 rounded-lg shrink-0"><Plus size={14} /></button>
-          </div>
-          <div className="space-y-1.5 min-h-[80px]">
-            {unplanned.length === 0 && <div className="text-xs text-slate-400 text-center py-4">Rien en attente</div>}
-            {unplanned.map(t => (
-              <AdminTaskPill key={t.id} t={t} onDragStart={() => setDraggingId(t.id)} onToggleDone={() => toggleDone(t)} onOpen={() => setEditing(t)} />
-            ))}
-          </div>
+      <div className="flex items-center gap-2 mb-3">
+        <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+          {[{ id: 'en_cours', label: 'En cours' }, { id: 'termine', label: `Terminées${doneTasks.length ? ` (${doneTasks.length})` : ''}` }].map(o => (
+            <button key={o.id} type="button" onClick={() => setStatusTab(o.id)}
+              className={`px-3 py-1.5 font-medium ${statusTab === o.id ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+              {o.label}
+            </button>
+          ))}
         </div>
-        <div className="space-y-4">{rightManagers.map(managerColumn)}</div>
       </div>
+      {statusTab === 'en_cours' ? (
+        <>
+          <div className="text-xs text-slate-400 mb-4">Planning partagé entre managers pour vos tâches administratives, séparé du reste de l'application. Glissez une tâche de la liste "À planifier" vers un jour du calendrier de la personne concernée ; cliquez sur une tâche pour l'étaler sur plusieurs jours, la réassigner ou la supprimer ; redéposez-la au centre pour la retirer du planning.</div>
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px_minmax(0,1fr)] gap-4 items-start">
+            <div className="space-y-4">{leftManagers.map(managerColumn)}</div>
+            <div className="bg-white rounded-2xl border border-slate-100 p-4"
+              onDragOver={(e) => e.preventDefault()} onDrop={unassign}>
+              <div className="text-sm font-semibold text-slate-700 mb-3">À planifier</div>
+              <div className="flex items-center gap-1.5 mb-3">
+                <input value={newTitle} onChange={e => setNewTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addTask(); }}
+                  placeholder="Nouvelle tâche…" className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+                <select value={newImportance} onChange={e => setNewImportance(e.target.value)} className="border border-slate-200 rounded-lg px-1.5 py-1.5 text-xs bg-white focus:outline-none">
+                  {PRIORITIES.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                </select>
+                <button onClick={addTask} disabled={!newTitle.trim()} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white p-1.5 rounded-lg shrink-0"><Plus size={14} /></button>
+              </div>
+              <div className="space-y-1.5 min-h-[80px]">
+                {unplanned.length === 0 && <div className="text-xs text-slate-400 text-center py-4">Rien en attente</div>}
+                {unplanned.map(t => (
+                  <AdminTaskPill key={t.id} t={t} onDragStart={() => setDraggingId(t.id)} onToggleDone={() => toggleDone(t)} onOpen={() => setEditing(t)} />
+                ))}
+              </div>
+            </div>
+            <div className="space-y-4">{rightManagers.map(managerColumn)}</div>
+          </div>
+        </>
+      ) : (
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+          {doneTasks.length === 0 && <EmptyState icon={CheckCircle2} title="Aucune tâche terminée" />}
+          {doneTasks.length > 0 && (
+            <div className="divide-y divide-slate-50">
+              {doneTasks.map(t => {
+                const assignee = managers.find(m => m.id === t.assigneeId);
+                return (
+                  <button key={t.id} onClick={() => setEditing(t)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-50">
+                    <CheckCircle2 size={16} className="shrink-0" style={{ color: STATUSES.find(s => s.id === 'termine').color }} />
+                    <span className="flex-1 min-w-0 truncate text-sm text-slate-500 line-through">{t.title}</span>
+                    {assignee && <span className="flex items-center gap-1 text-xs text-slate-400 shrink-0"><Avatar name={assignee.name} size={18} />{assignee.name.split(' ')[0]}</span>}
+                    <span className="text-xs text-slate-400 shrink-0 w-16 text-right">{t.date ? fmtDate(t.date) : '—'}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
       {editing && <AdminTaskModal task={editing} managers={managers} onSave={onSave} onDelete={onDelete} onClose={() => setEditing(null)} />}
     </div>
   );

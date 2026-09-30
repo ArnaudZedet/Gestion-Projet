@@ -2775,16 +2775,24 @@ function TransmissionsView({ transmissions, members, currentMemberId, channelLas
     (currentMemberObj?.role === c.functionGroup || (c.functionGroup === 'Manipulateur' && currentMemberObj?.role === 'Aide manipulateur')));
   const [selected, setSelected] = useState(myChannel || channels[0]);
   const [message, setMessage] = useState('');
+  // Les messages de plus de 48h restent repliés par défaut (juste un
+  // compteur), pour ne pas noyer les messages récents dans un historique qui
+  // s'accumule — un clic les déroule.
+  const [showOlder, setShowOlder] = useState(false);
   // Un canal est marqué "lu" dès qu'on l'affiche (au premier rendu et à
   // chaque changement), plutôt qu'à la fermeture de tout l'onglet
   // Transmissions — ça marche même si on ferme l'app ou qu'on recharge la
   // page sans être passé par un autre onglet du menu avant.
   useEffect(() => {
     onMarkChannelSeen(selected.service, selected.functionGroup);
+    setShowOlder(false);
   }, [selected.service, selected.functionGroup]);
   const channelMsgs = transmissions
     .filter(t => t.service === selected.service && t.functionGroup === selected.functionGroup)
     .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+  const cutoff48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const olderMsgs = channelMsgs.filter(t => (t.createdAt || '') < cutoff48h);
+  const recentMsgs = channelMsgs.filter(t => (t.createdAt || '') >= cutoff48h);
   const fmtWhen = (iso) => iso ? new Date(iso).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
   const handleSend = () => {
     if (!message.trim()) return;
@@ -2822,7 +2830,18 @@ function TransmissionsView({ transmissions, members, currentMemberId, channelLas
         <div className="px-4 py-3 border-b border-slate-100 font-semibold text-slate-700" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>{selected.label}</div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {channelMsgs.length === 0 && <EmptyState icon={MessageCircle} title="Aucun message" subtitle="Soyez la première personne à écrire ici." />}
-          {channelMsgs.map(t => {
+          {olderMsgs.length > 0 && (
+            showOlder ? (
+              <button onClick={() => setShowOlder(false)} className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1">
+                <ChevronDown size={12} className="rotate-180" /> Replier les messages de plus de 48h
+              </button>
+            ) : (
+              <button onClick={() => setShowOlder(true)} className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+                <ChevronDown size={12} /> Voir {olderMsgs.length} message{olderMsgs.length > 1 ? 's' : ''} de plus de 48h
+              </button>
+            )
+          )}
+          {(showOlder ? channelMsgs : recentMsgs).map(t => {
             const author = members.find(m => m.id === t.authorId);
             return (
               <div key={t.id} className="flex gap-2.5">

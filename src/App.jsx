@@ -2775,7 +2775,7 @@ function TransmissionsView({ transmissions, members, currentMemberId, channelLas
     (currentMemberObj?.role === c.functionGroup || (c.functionGroup === 'Manipulateur' && currentMemberObj?.role === 'Aide manipulateur')));
   const [selected, setSelected] = useState(myChannel || channels[0]);
   const [message, setMessage] = useState('');
-  // Les messages de plus de 48h restent repliés par défaut (juste un
+  // Les messages de plus de 72h restent repliés par défaut (juste un
   // compteur), pour ne pas noyer les messages récents dans un historique qui
   // s'accumule — un clic les déroule.
   const [showOlder, setShowOlder] = useState(false);
@@ -2790,9 +2790,9 @@ function TransmissionsView({ transmissions, members, currentMemberId, channelLas
   const channelMsgs = transmissions
     .filter(t => t.service === selected.service && t.functionGroup === selected.functionGroup)
     .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
-  const cutoff48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-  const olderMsgs = channelMsgs.filter(t => (t.createdAt || '') < cutoff48h);
-  const recentMsgs = channelMsgs.filter(t => (t.createdAt || '') >= cutoff48h);
+  const cutoff72h = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+  const olderMsgs = channelMsgs.filter(t => (t.createdAt || '') < cutoff72h);
+  const recentMsgs = channelMsgs.filter(t => (t.createdAt || '') >= cutoff72h);
   const fmtWhen = (iso) => iso ? new Date(iso).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
   const handleSend = () => {
     if (!message.trim()) return;
@@ -2833,11 +2833,11 @@ function TransmissionsView({ transmissions, members, currentMemberId, channelLas
           {olderMsgs.length > 0 && (
             showOlder ? (
               <button onClick={() => setShowOlder(false)} className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1">
-                <ChevronDown size={12} className="rotate-180" /> Replier les messages de plus de 48h
+                <ChevronDown size={12} className="rotate-180" /> Replier les messages de plus de 72h
               </button>
             ) : (
               <button onClick={() => setShowOlder(true)} className="text-xs text-blue-600 hover:underline flex items-center gap-1">
-                <ChevronDown size={12} /> Voir {olderMsgs.length} message{olderMsgs.length > 1 ? 's' : ''} de plus de 48h
+                <ChevronDown size={12} /> Voir {olderMsgs.length} message{olderMsgs.length > 1 ? 's' : ''} de plus de 72h
               </button>
             )
           )}

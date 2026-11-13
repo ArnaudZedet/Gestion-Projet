@@ -1,6 +1,7 @@
 import { supabaseAdmin } from './_supabaseAdmin.js';
 import { sendEmail } from './_resend.js';
 import { requireCron } from './_cron.js';
+import { autoCloseAndRenewProject } from './_projectRenewal.js';
 
 // Noms de projet et de collaborateur sont saisis par les utilisateurs et
 // finissent tels quels dans du HTML envoyé par email — échapper avant
@@ -44,8 +45,18 @@ function prevBusinessDay(dateStr) {
 // Fait cinq choses, regroupées dans le même cron pour rester dans la
 // limite de 2 tâches planifiées du plan Vercel Hobby :
 //
-// 1. Alerte manager sur les projets en retard (une seule fois par projet,
-//    tant que rien ne change — voir late_notified_at).
+// 1. Projets en retard (date de fin dépassée, jamais marqués "Terminé",
+//    une seule fois par projet — voir late_notified_at) :
+//    - s'ils ont une cadence de répétition exploitable (le projet ou son
+//      unique tâche récurrente), ils sont clôturés automatiquement et leur
+//      cycle suivant est lancé tout de suite (même mécanisme que la
+//      clôture manuelle, voir _projectRenewal.js) — avec un mail "clôture
+//      obligatoire" au(x) responsable(s) n'ayant pas clôturé à temps, en
+//      copie Caroline et Arnaud. Comme ce cron tourne chaque matin, un
+//      projet toujours ouvert le vendredi soir est donc clôturé au plus
+//      tard le samedi matin.
+//    - sinon (projet ponctuel, sans répétition), comportement inchangé :
+//      simple alerte aux administrateurs.
 // 2. Rappel au(x) responsable(s) d'un projet qui démarre le prochain jour
 //    ouvré (une seule fois par cycle — voir start_reminder_sent), déposé
 //    dans la file d'attente pour partir dans le digest du jour même.
@@ -62,32 +73,83 @@ function prevBusinessDay(dateStr) {
 export default async function handler(req, res) {
   if (!requireCron(req)) return res.status(401).json({ error: 'Non autorisé' });
 
-  const result = { lateProjects: 0, startReminders: 0, endReminders: 0, adminTaskReminders: 0, digestRecipients: 0, digestNotifications: 0 };
+  const result = { lateProjects: 0, autoClosedProjects: 0, mandatoryClosureEmails: 0, startReminders: 0, endReminders: 0, adminTaskReminders: 0, digestRecipients: 0, digestNotifications: 0 };
 
   try {
+    // --- 0. Collaborateurs (nécessaire pour la clôture/rotation + les copies) ---
+    const { data: allMembers, error: allMembersErr } = await supabaseAdmin
+      .from('members').select('id, name, email, role, access_level, always_approver');
+    if (allMembersErr) throw new Error(allMembersErr.message);
+    const membersById = Object.fromEntries((allMembers || []).map((m) => [m.id, m]));
+    // "Caroline" et "Arnaud" = les personnes désignées pour recevoir le mail
+    // de rappel en copie, retrouvées par prénom plutôt qu'une adresse en dur
+    // dans le code (reste à jour si leur email change).
+    const ccEmails = (allMembers || [])
+      .filter((m) => ['caroline', 'arnaud'].includes((m.name || '').trim().split(/\s+/)[0]?.toLowerCase()))
+      .map((m) => m.email)
+      .filter(Boolean);
+
     // --- 1. Projets en retard ---
     const today = new Date().toISOString().slice(0, 10);
     const { data: lateProjects, error: projErr } = await supabaseAdmin
       .from('projects')
-      .select('id, name, end_date')
+      .select('*')
       .lt('end_date', today)
       .neq('status', 'termine')
       .is('late_notified_at', null);
     if (projErr) throw new Error(projErr.message);
 
     if (lateProjects && lateProjects.length > 0) {
-      const { data: managers, error: memErr } = await supabaseAdmin.from('members').select('email').eq('access_level', 'manager');
-      if (memErr) throw new Error(memErr.message);
-      const managerEmails = (managers || []).map((m) => m.email).filter(Boolean);
+      const plainLateProjects = [];
+      for (const project of lateProjects) {
+        const { data: projectTasks, error: tasksErr } = await supabaseAdmin.from('tasks').select('*').eq('project_id', project.id);
+        if (tasksErr) throw new Error(tasksErr.message);
 
-      if (managerEmails.length) {
-        const plural = lateProjects.length > 1;
-        const items = lateProjects.map((p) => `<li><strong>${escapeHtml(p.name)}</strong> — fin prévue le ${p.end_date}</li>`).join('');
-        const html = `<p>${lateProjects.length} projet${plural ? 's ont dépassé' : ' a dépassé'} sa date de fin sans être marqué${plural ? 's' : ''} "Terminé" :</p><ul>${items}</ul>`;
-        await sendEmail({ to: managerEmails, subject: `${lateProjects.length} projet${plural ? 's' : ''} en retard`, html });
+        const renewal = await autoCloseAndRenewProject({ supabaseAdmin, project, tasks: projectTasks, membersById });
+        if (!renewal.renewed) { plainLateProjects.push(project); continue; }
+
+        result.autoClosedProjects += 1;
+        const newlyResponsible = (renewal.newResponsibleIds || []).filter((id) => !(renewal.oldResponsibleIds || []).includes(id));
+        if (newlyResponsible.length) {
+          const queueRows = newlyResponsible.map((id) => membersById[id]).filter((m) => m?.email).map((m) => ({
+            id: crypto.randomUUID(),
+            recipient_email: m.email,
+            subject: `Vous êtes responsable du projet « ${project.name} »`,
+            html: `<p>Bonjour ${escapeHtml(m.name)},</p><p>Vous êtes désormais responsable du projet <strong>${escapeHtml(project.name)}</strong> pour le cycle du ${renewal.newStartDate} au ${renewal.newEndDate}.</p>`,
+          }));
+          if (queueRows.length) await supabaseAdmin.from('notification_queue').insert(queueRows);
+        }
+        const responsibleEmails = (renewal.oldResponsibleIds || []).map((id) => membersById[id]?.email).filter(Boolean);
+        const responsibleNames = (renewal.oldResponsibleIds || []).map((id) => membersById[id]?.name).filter(Boolean).join(', ');
+        const to = responsibleEmails.length ? responsibleEmails : ccEmails;
+        const cc = responsibleEmails.length ? ccEmails.filter((e) => !responsibleEmails.includes(e)) : [];
+        if (to.length) {
+          await sendEmail({
+            to, cc,
+            subject: `Clôture obligatoire — Projet « ${project.name} » non clôturé`,
+            html: `<p>Bonjour${responsibleNames ? ` ${escapeHtml(responsibleNames)}` : ''},</p>` +
+              `<p>Le projet <strong>${escapeHtml(project.name)}</strong> (fin prévue le ${project.end_date}) n'avait pas été clôturé avant la fin de la semaine.</p>` +
+              `<p>Il a donc été <strong>clôturé automatiquement</strong> pour permettre le lancement du cycle suivant, du ${renewal.newStartDate} au ${renewal.newEndDate}.</p>` +
+              `<p>Pour rappel, la clôture des projets en fin de période est <strong>obligatoire</strong> — merci d'y penser la prochaine fois.</p>`,
+          });
+          result.mandatoryClosureEmails += 1;
+        }
       }
-      await supabaseAdmin.from('projects').update({ late_notified_at: new Date().toISOString() }).in('id', lateProjects.map((p) => p.id));
-      result.lateProjects = lateProjects.length;
+
+      if (plainLateProjects.length) {
+        const { data: managers, error: memErr } = await supabaseAdmin.from('members').select('email').eq('access_level', 'manager');
+        if (memErr) throw new Error(memErr.message);
+        const managerEmails = (managers || []).map((m) => m.email).filter(Boolean);
+
+        if (managerEmails.length) {
+          const plural = plainLateProjects.length > 1;
+          const items = plainLateProjects.map((p) => `<li><strong>${escapeHtml(p.name)}</strong> — fin prévue le ${p.end_date}</li>`).join('');
+          const html = `<p>${plainLateProjects.length} projet${plural ? 's ont dépassé' : ' a dépassé'} sa date de fin sans être marqué${plural ? 's' : ''} "Terminé" :</p><ul>${items}</ul>`;
+          await sendEmail({ to: managerEmails, subject: `${plainLateProjects.length} projet${plural ? 's' : ''} en retard`, html });
+        }
+        result.lateProjects = plainLateProjects.length;
+        await supabaseAdmin.from('projects').update({ late_notified_at: new Date().toISOString() }).in('id', plainLateProjects.map((p) => p.id));
+      }
     }
 
     // --- 2. Rappel de démarrage (veille ouvrée) ---

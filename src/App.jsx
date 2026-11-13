@@ -1433,21 +1433,41 @@ function ProjectModal({ project, members, externalContacts, tasks, projects, cur
 
 const ROTATION_SERVICES = ['Radio', 'Scanner', 'IRM'];
 
+// Deux postes "ouverture/fermeture" peuvent exister en parallèle sur la même
+// structure, mais tenus par des fonctions différentes (ex. la secrétaire qui
+// ouvre l'accueil n'est pas le/la manipulateur·rice qui ouvre la salle) — on
+// dissocie donc complètement équipe ET horaires entre Manipulateurs et
+// Secrétaires : deux tirages au sort indépendants, chacun pouvant être
+// activé ou non séparément.
+const ROTATION_FUNCTION_GROUPS = [
+  { id: 'Manipulateur', label: 'Manipulateurs', matches: (m) => m.role === 'Manipulateur' || m.role === 'Aide manipulateur' },
+  { id: 'Secrétaire', label: 'Secrétaires', matches: (m) => m.role === 'Secrétaire' },
+];
+const defaultRotationSlots = () => ({
+  opening: { enabled: true, label: 'Premier arrivé', time: '07:30' },
+  closing: { enabled: true, label: 'Dernier parti', time: '19:00' },
+});
+
 function RotationModal({ members, onSave, onClose }) {
   const [form, setForm] = useState({
-    name: '', service: ROTATION_SERVICES[0], teamIds: [],
+    name: '', service: ROTATION_SERVICES[0],
     month: todayISO().slice(0, 7), workDays: [1, 2, 3, 4, 5],
-    slots: {
-      opening: { enabled: true, label: 'Premier arrivé', time: '07:30' },
-      closing: { enabled: true, label: 'Dernier parti', time: '19:00' },
-    },
+    groups: Object.fromEntries(ROTATION_FUNCTION_GROUPS.map(g => [g.id, { teamIds: [], slots: defaultRotationSlots() }])),
   });
   const [saving, setSaving] = useState(false);
-  const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
+  const toggleTeam = (groupId, id) => setForm(f => {
+    const g = f.groups[groupId];
+    const teamIds = g.teamIds.includes(id) ? g.teamIds.filter(x => x !== id) : [...g.teamIds, id];
+    return { ...f, groups: { ...f.groups, [groupId]: { ...g, teamIds } } };
+  });
   const toggleDay = (id) => setForm(f => ({ ...f, workDays: f.workDays.includes(id) ? f.workDays.filter(x => x !== id) : [...f.workDays, id] }));
-  const setSlot = (key, patch) => setForm(f => ({ ...f, slots: { ...f.slots, [key]: { ...f.slots[key], ...patch } } }));
-  const enabledSlots = Object.values(form.slots).filter(s => s.enabled);
-  const canSave = !!form.name.trim() && form.teamIds.length > 0 && form.workDays.length > 0 && enabledSlots.length > 0 && enabledSlots.every(s => s.time);
+  const setSlot = (groupId, key, patch) => setForm(f => {
+    const g = f.groups[groupId];
+    return { ...f, groups: { ...f.groups, [groupId]: { ...g, slots: { ...g.slots, [key]: { ...g.slots[key], ...patch } } } } };
+  });
+  const groupIsActive = (g) => g.teamIds.length > 0 && Object.values(g.slots).some(s => s.enabled && s.time);
+  const activeGroups = Object.values(form.groups).filter(groupIsActive);
+  const canSave = !!form.name.trim() && form.workDays.length > 0 && activeGroups.length > 0;
   const handleSubmit = async () => {
     if (!canSave || saving) return;
     setSaving(true);
@@ -1469,20 +1489,6 @@ function RotationModal({ members, onSave, onClose }) {
           {ROTATION_SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
       </Field>
-      <Field label="Équipe qui tourne sur ce poste">
-        <div className="flex flex-wrap gap-1.5">
-          {members.filter(m => m.role !== 'Manager').map(m => {
-            const active = form.teamIds.includes(m.id);
-            return (
-              <button key={m.id} type="button" onClick={() => toggleTeam(m.id)}
-                className={`text-xs px-2.5 py-1.5 rounded-full border flex items-center gap-1.5 ${active ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-500'}`}>
-                <Avatar name={m.name} size={16} /> {m.name}
-              </button>
-            );
-          })}
-        </div>
-        <div className="text-[11px] text-slate-400 mt-1.5">Modifiable à tout moment depuis la fiche du projet créé — les administrateurs, eux, ne sont jamais tirés au sort même s'ils sont cochés ici.</div>
-      </Field>
       <Field label="Premier mois concerné">
         <input type="month" className={inputCls} value={form.month} onChange={e => setForm({ ...form, month: e.target.value })} />
       </Field>
@@ -1499,21 +1505,46 @@ function RotationModal({ members, onSave, onClose }) {
           })}
         </div>
       </Field>
-      <Field label="Postes à pourvoir chaque jour concerné">
-        <div className="space-y-2">
-          {[['opening', 'Premier arrivé'], ['closing', 'Dernier parti']].map(([key, fallback]) => {
-            const slot = form.slots[key];
-            return (
-              <div key={key} className="flex items-center gap-2">
-                <input type="checkbox" checked={slot.enabled} onChange={e => setSlot(key, { enabled: e.target.checked })} />
-                <input disabled={!slot.enabled} className={`${inputCls} flex-1`} value={slot.label} placeholder={fallback} onChange={e => setSlot(key, { label: e.target.value })} />
-                <input disabled={!slot.enabled} type="time" className={inputCls} style={{ width: 110 }} value={slot.time} onChange={e => setSlot(key, { time: e.target.value })} />
+      <div className="text-xs font-medium text-slate-500 mb-1.5 mt-4">Postes par fonction — équipe et horaires séparés pour chacune</div>
+      {ROTATION_FUNCTION_GROUPS.map(g => {
+        const group = form.groups[g.id];
+        const eligible = members.filter(m => g.matches(m));
+        return (
+          <div key={g.id} className="border border-slate-200 rounded-xl p-3 mb-3">
+            <div className="text-sm font-semibold text-slate-700 mb-2">{g.label}</div>
+            <Field label={`Équipe ${g.label.toLowerCase()} qui tourne sur ce poste`}>
+              <div className="flex flex-wrap gap-1.5">
+                {eligible.length === 0 && <div className="text-xs text-slate-400">Aucun collaborateur avec cette fonction.</div>}
+                {eligible.map(m => {
+                  const active = group.teamIds.includes(m.id);
+                  return (
+                    <button key={m.id} type="button" onClick={() => toggleTeam(g.id, m.id)}
+                      className={`text-xs px-2.5 py-1.5 rounded-full border flex items-center gap-1.5 ${active ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-500'}`}>
+                      <Avatar name={m.name} size={16} /> {m.name}
+                    </button>
+                  );
+                })}
               </div>
-            );
-          })}
-        </div>
-        <div className="text-[11px] text-slate-400 mt-1.5">Chacun des deux postes a son propre tirage — l'équité (nombre de fois sur le poste) est garantie séparément pour l'un et pour l'autre.</div>
-      </Field>
+              <div className="text-[11px] text-slate-400 mt-1.5">Laissez vide pour ne pas activer de roulement sur cette fonction.</div>
+            </Field>
+            <Field label="Postes à pourvoir chaque jour concerné">
+              <div className="space-y-2">
+                {[['opening', 'Premier arrivé'], ['closing', 'Dernier parti']].map(([key, fallback]) => {
+                  const slot = group.slots[key];
+                  return (
+                    <div key={key} className="flex items-center gap-2">
+                      <input type="checkbox" checked={slot.enabled} onChange={e => setSlot(g.id, key, { enabled: e.target.checked })} />
+                      <input disabled={!slot.enabled} className={`${inputCls} flex-1`} value={slot.label} placeholder={fallback} onChange={e => setSlot(g.id, key, { label: e.target.value })} />
+                      <input disabled={!slot.enabled} type="time" className={inputCls} style={{ width: 110 }} value={slot.time} onChange={e => setSlot(g.id, key, { time: e.target.value })} />
+                    </div>
+                  );
+                })}
+              </div>
+            </Field>
+          </div>
+        );
+      })}
+      <div className="text-[11px] text-slate-400 mb-3.5">Chaque poste (ouverture/fermeture) a son propre tirage, par fonction — l'équité (nombre de fois sur le poste) est garantie séparément pour chacun. Les administrateurs ne sont jamais tirés au sort même s'ils sont cochés.</div>
       <div className="flex items-center justify-end gap-2 mt-5 pt-4 border-t border-slate-100">
         <button onClick={onClose} className="text-slate-500 hover:bg-slate-50 text-sm font-medium px-3 py-2 rounded-lg">Annuler</button>
         <button disabled={!canSave || saving} onClick={handleSubmit} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg flex items-center gap-1.5">
@@ -3843,16 +3874,6 @@ function ReferentApp({ session, onSignOut }) {
     const monthStart = `${cfg.month}-01`;
     const monthEnd = addDays(addMonths(monthStart, 1), -1);
     const avoidDays = WEEKDAYS.map(w => w.id).filter(id => !cfg.workDays.includes(id));
-    const projectId = uid();
-    const project = {
-      id: projectId, name: cfg.name, description: '', color: PROJECT_COLORS[0], service: cfg.service,
-      teamIds: cfg.teamIds, externalIds: [], startDate: monthStart, endDate: '', status: 'en_cours',
-      priority: 'normale', importance: 'moyenne', repeatUnit: 'aucune', repeatEvery: 1,
-      lateNotifiedAt: null, startReminderSent: false, endReminderSent: false,
-      responsibleIds: [], rotateResponsible: false, rotateResponsibleCount: 1, responsibleRotationPool: [],
-      pendingApproval: false, createdBy: connectedAs,
-    };
-    const slotEntries = Object.entries(cfg.slots).filter(([, s]) => s.enabled && s.time);
     const workingDays = [];
     for (let cur = monthStart; cur <= monthEnd; cur = addDays(cur, 1)) {
       if (!isAvoidedDay(cur, avoidDays)) workingDays.push(cur);
@@ -3865,26 +3886,45 @@ function ReferentApp({ session, onSignOut }) {
       }
       return presenceCache.get(weekStart);
     };
-    const drawState = {};
-    slotEntries.forEach(([key]) => { drawState[key] = { assigneeId: '', rotationPool: [] }; });
+    // Chaque fonction (Manipulateurs / Secrétaires) a sa propre équipe et ses
+    // propres postes — deux tirages complètement indépendants, même si les
+    // deux tournent sur le même projet/la même structure.
+    const activeGroups = ROTATION_FUNCTION_GROUPS
+      .map(g => ({ def: g, cfg: cfg.groups[g.id] }))
+      .filter(g => g.cfg && g.cfg.teamIds.length > 0 && Object.values(g.cfg.slots).some(s => s.enabled && s.time));
+    const projectId = uid();
+    const project = {
+      id: projectId, name: cfg.name, description: '', color: PROJECT_COLORS[0], service: cfg.service,
+      teamIds: Array.from(new Set(activeGroups.flatMap(g => g.cfg.teamIds))), externalIds: [],
+      startDate: monthStart, endDate: '', status: 'en_cours',
+      priority: 'normale', importance: 'moyenne', repeatUnit: 'aucune', repeatEvery: 1,
+      lateNotifiedAt: null, startReminderSent: false, endReminderSent: false,
+      responsibleIds: [], rotateResponsible: false, rotateResponsibleCount: 1, responsibleRotationPool: [],
+      pendingApproval: false, createdBy: connectedAs,
+    };
     const newTasks = [];
-    for (let i = 0; i < workingDays.length; i++) {
-      const day = workingDays[i];
-      const isLast = i === workingDays.length - 1;
-      const presentSet = await presenceFor(day);
-      for (const [key, slot] of slotEntries) {
-        const state = drawState[key];
-        const { assigneeId, rotationPool } = nextRotatedAssignee(state, cfg.teamIds, day, () => 0, presentSet);
-        newTasks.push({
-          id: uid(), title: slot.label || (key === 'opening' ? 'Premier arrivé' : 'Dernier parti'), description: '',
-          projectId, assignMode: 'individuel', assigneeId, pool: [], raci: {},
-          priority: 'normale', importance: 'moyenne', scope: 'courte', status: 'a_faire',
-          startDate: day, deadline: day, time: slot.time,
-          repeatUnit: isLast ? 'jour' : 'aucune', repeatEvery: 1, avoidDays: isLast ? avoidDays : [],
-          rotateAssignee: isLast, rotationPool: isLast ? rotationPool : [],
-          isGovernance: false, governanceType: null, createdAt: todayISO(),
-        });
-        drawState[key] = { assigneeId, rotationPool };
+    for (const group of activeGroups) {
+      const slotEntries = Object.entries(group.cfg.slots).filter(([, s]) => s.enabled && s.time);
+      const drawState = {};
+      slotEntries.forEach(([key]) => { drawState[key] = { assigneeId: '', rotationPool: [] }; });
+      for (let i = 0; i < workingDays.length; i++) {
+        const day = workingDays[i];
+        const isLast = i === workingDays.length - 1;
+        const presentSet = await presenceFor(day);
+        for (const [key, slot] of slotEntries) {
+          const state = drawState[key];
+          const { assigneeId, rotationPool } = nextRotatedAssignee(state, group.cfg.teamIds, day, () => 0, presentSet);
+          newTasks.push({
+            id: uid(), title: `${slot.label || (key === 'opening' ? 'Premier arrivé' : 'Dernier parti')} — ${group.def.label}`, description: '',
+            projectId, assignMode: 'individuel', assigneeId, pool: [], raci: {},
+            priority: 'normale', importance: 'moyenne', scope: 'courte', status: 'a_faire',
+            startDate: day, deadline: day, time: slot.time,
+            repeatUnit: isLast ? 'jour' : 'aucune', repeatEvery: 1, avoidDays: isLast ? avoidDays : [],
+            rotateAssignee: isLast, rotationPool: isLast ? rotationPool : [],
+            isGovernance: false, governanceType: null, createdAt: todayISO(),
+          });
+          drawState[key] = { assigneeId, rotationPool };
+        }
       }
     }
     setProjects(prev => [...prev, project]);

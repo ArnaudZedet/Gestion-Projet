@@ -6,7 +6,7 @@ import {
   Search, Loader2, Inbox, GanttChartSquare, MapPin, Lock, Repeat,
   ClipboardList, Send, XCircle, Building2, Mail, Phone, Check,
   Flag, PlayCircle, ShieldAlert, GraduationCap, Milestone as MilestoneIcon, Megaphone, ClipboardCheck,
-  ChevronLeft, ChevronRight, ChevronDown, FolderPlus, List as ListIcon, Download, Copy, Upload, MessageSquare, Network, MessageCircle, ListTodo
+  ChevronLeft, ChevronRight, ChevronDown, FolderPlus, List as ListIcon, Download, Copy, Upload, MessageSquare, Network, MessageCircle, ListTodo, Shuffle
 } from 'lucide-react';
 
 /* ---------------------------------------------------------------------- */
@@ -1428,6 +1428,103 @@ function ProjectModal({ project, members, externalContacts, tasks, projects, cur
 }
 
 /* ---------------------------------------------------------------------- */
+/*  Roulement journalier (postes Ouverture/Fermeture, tirage équitable)   */
+/* ---------------------------------------------------------------------- */
+
+const ROTATION_SERVICES = ['Radio', 'Scanner', 'IRM'];
+
+function RotationModal({ members, onSave, onClose }) {
+  const [form, setForm] = useState({
+    name: '', service: ROTATION_SERVICES[0], teamIds: [],
+    month: todayISO().slice(0, 7), workDays: [1, 2, 3, 4, 5],
+    slots: {
+      opening: { enabled: true, label: 'Premier arrivé', time: '07:30' },
+      closing: { enabled: true, label: 'Dernier parti', time: '19:00' },
+    },
+  });
+  const [saving, setSaving] = useState(false);
+  const toggleTeam = (id) => setForm(f => ({ ...f, teamIds: f.teamIds.includes(id) ? f.teamIds.filter(x => x !== id) : [...f.teamIds, id] }));
+  const toggleDay = (id) => setForm(f => ({ ...f, workDays: f.workDays.includes(id) ? f.workDays.filter(x => x !== id) : [...f.workDays, id] }));
+  const setSlot = (key, patch) => setForm(f => ({ ...f, slots: { ...f.slots, [key]: { ...f.slots[key], ...patch } } }));
+  const enabledSlots = Object.values(form.slots).filter(s => s.enabled);
+  const canSave = !!form.name.trim() && form.teamIds.length > 0 && form.workDays.length > 0 && enabledSlots.length > 0 && enabledSlots.every(s => s.time);
+  const handleSubmit = async () => {
+    if (!canSave || saving) return;
+    setSaving(true);
+    await onSave(form);
+    setSaving(false);
+  };
+  return (
+    <Modal title="Nouveau roulement mensuel" onClose={onClose} wide>
+      <div className="text-xs text-slate-400 bg-slate-50 rounded-lg px-2.5 py-2 mb-3.5">
+        Crée un projet avec une tâche par jour concerné, assignée automatiquement à tour de rôle dans l'équipe choisie —
+        en écartant, quand c'est possible, les personnes absentes cette semaine-là sur le planning Swappy. Une fois créé,
+        le roulement continue ensuite tout seul, mois après mois, sans action de votre part.
+      </div>
+      <Field label="Nom du roulement">
+        <input className={inputCls} placeholder="Ex. Ouverture / fermeture Radio" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+      </Field>
+      <Field label="Structure concernée">
+        <select className={inputCls} value={form.service} onChange={e => setForm({ ...form, service: e.target.value })}>
+          {ROTATION_SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </Field>
+      <Field label="Équipe qui tourne sur ce poste">
+        <div className="flex flex-wrap gap-1.5">
+          {members.filter(m => m.role !== 'Manager').map(m => {
+            const active = form.teamIds.includes(m.id);
+            return (
+              <button key={m.id} type="button" onClick={() => toggleTeam(m.id)}
+                className={`text-xs px-2.5 py-1.5 rounded-full border flex items-center gap-1.5 ${active ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-500'}`}>
+                <Avatar name={m.name} size={16} /> {m.name}
+              </button>
+            );
+          })}
+        </div>
+        <div className="text-[11px] text-slate-400 mt-1.5">Modifiable à tout moment depuis la fiche du projet créé — les administrateurs, eux, ne sont jamais tirés au sort même s'ils sont cochés ici.</div>
+      </Field>
+      <Field label="Premier mois concerné">
+        <input type="month" className={inputCls} value={form.month} onChange={e => setForm({ ...form, month: e.target.value })} />
+      </Field>
+      <Field label="Jours concernés">
+        <div className="flex flex-wrap gap-1.5">
+          {WEEKDAYS.map(w => {
+            const active = form.workDays.includes(w.id);
+            return (
+              <button key={w.id} type="button" onClick={() => toggleDay(w.id)}
+                className={`text-xs px-2.5 py-1 rounded-full border ${active ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-500'}`}>
+                {w.label.slice(0, 3)}
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+      <Field label="Postes à pourvoir chaque jour concerné">
+        <div className="space-y-2">
+          {[['opening', 'Premier arrivé'], ['closing', 'Dernier parti']].map(([key, fallback]) => {
+            const slot = form.slots[key];
+            return (
+              <div key={key} className="flex items-center gap-2">
+                <input type="checkbox" checked={slot.enabled} onChange={e => setSlot(key, { enabled: e.target.checked })} />
+                <input disabled={!slot.enabled} className={`${inputCls} flex-1`} value={slot.label} placeholder={fallback} onChange={e => setSlot(key, { label: e.target.value })} />
+                <input disabled={!slot.enabled} type="time" className={inputCls} style={{ width: 110 }} value={slot.time} onChange={e => setSlot(key, { time: e.target.value })} />
+              </div>
+            );
+          })}
+        </div>
+        <div className="text-[11px] text-slate-400 mt-1.5">Chacun des deux postes a son propre tirage — l'équité (nombre de fois sur le poste) est garantie séparément pour l'un et pour l'autre.</div>
+      </Field>
+      <div className="flex items-center justify-end gap-2 mt-5 pt-4 border-t border-slate-100">
+        <button onClick={onClose} className="text-slate-500 hover:bg-slate-50 text-sm font-medium px-3 py-2 rounded-lg">Annuler</button>
+        <button disabled={!canSave || saving} onClick={handleSubmit} className="bg-blue-600 disabled:opacity-40 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg flex items-center gap-1.5">
+          {saving ? <><Loader2 size={14} className="animate-spin" /> Création…</> : <>Créer le roulement</>}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
 /*  Rendez-vous & Contacts externes                                       */
 /* ---------------------------------------------------------------------- */
 
@@ -1815,7 +1912,7 @@ function Dashboard({ tasks, members, projects, appointments, connectedAs, openTa
 /*  Tâches — regroupées par projet, avec création de projet intégrée      */
 /* ---------------------------------------------------------------------- */
 
-function TasksView({ tasks, members, projects, perm, currentMemberId, scope, openTask, newTask, newProject, editProject }) {
+function TasksView({ tasks, members, projects, perm, currentMemberId, scope, openTask, newTask, newProject, newRotation, editProject }) {
   const [filterMember, setFilterMember] = useState('all');
   const [filterProject, setFilterProject] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -2030,6 +2127,7 @@ function TasksView({ tasks, members, projects, perm, currentMemberId, scope, ope
         </div>
         <div className="ml-auto flex gap-2">
           {perm.canCreateProject && <button onClick={() => { setProjectStatusFilter('en_cours'); newProject(); }} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><FolderPlus size={14} /> Nouveau projet</button>}
+          {perm.isManager && <button onClick={() => { setProjectStatusFilter('en_cours'); newRotation(); }} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Shuffle size={14} /> Nouveau roulement</button>}
           {perm.canCreateTask && <button onClick={() => newTask(filterProject !== 'all' ? filterProject : undefined)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Plus size={14} /> Nouvelle tâche</button>}
         </div>
       </div>
@@ -3290,6 +3388,7 @@ function ReferentApp({ session, onSignOut }) {
   const [taskModal, setTaskModal] = useState(null);
   const [memberModal, setMemberModal] = useState(null);
   const [projectModal, setProjectModal] = useState(null);
+  const [rotationModal, setRotationModal] = useState(null);
   const [apptModal, setApptModal] = useState(null);
   const [contactModal, setContactModal] = useState(null);
   const [requestModal, setRequestModal] = useState(null);
@@ -3728,6 +3827,71 @@ function ReferentApp({ session, onSignOut }) {
     Object.keys(raci).forEach(id => { if (raci[id] === 'R') delete raci[id]; });
     if (assigneeId) raci[assigneeId] = 'R';
     return { raci, rotationPool };
+  };
+
+  // Crée un projet de roulement (ex. ouverture/fermeture Radio) : les tâches
+  // du premier mois sont générées d'un coup (visibilité immédiate sur tout le
+  // mois), avec un tirage équitable — "sac tournant", comme pour les autres
+  // rotations — distinct pour chaque poste (ouverture ≠ fermeture), et en
+  // écartant quand possible les personnes absentes cette semaine-là sur
+  // Swappy. Seule la dernière occurrence du mois garde repeatUnit/rotateAssignee
+  // actifs : c'est elle qui, une fois "Terminée", fera naître automatiquement
+  // le mois suivant via le même mécanisme que n'importe quelle tâche
+  // récurrente (voir saveTask) — le roulement continue ensuite sans qu'on ait
+  // à y repenser.
+  const createRotationProject = async (cfg) => {
+    const monthStart = `${cfg.month}-01`;
+    const monthEnd = addDays(addMonths(monthStart, 1), -1);
+    const avoidDays = WEEKDAYS.map(w => w.id).filter(id => !cfg.workDays.includes(id));
+    const projectId = uid();
+    const project = {
+      id: projectId, name: cfg.name, description: '', color: PROJECT_COLORS[0], service: cfg.service,
+      teamIds: cfg.teamIds, externalIds: [], startDate: monthStart, endDate: '', status: 'en_cours',
+      priority: 'normale', importance: 'moyenne', repeatUnit: 'aucune', repeatEvery: 1,
+      lateNotifiedAt: null, startReminderSent: false, endReminderSent: false,
+      responsibleIds: [], rotateResponsible: false, rotateResponsibleCount: 1, responsibleRotationPool: [],
+      pendingApproval: false, createdBy: connectedAs,
+    };
+    const slotEntries = Object.entries(cfg.slots).filter(([, s]) => s.enabled && s.time);
+    const workingDays = [];
+    for (let cur = monthStart; cur <= monthEnd; cur = addDays(cur, 1)) {
+      if (!isAvoidedDay(cur, avoidDays)) workingDays.push(cur);
+    }
+    const presenceCache = new Map();
+    const presenceFor = async (iso) => {
+      const weekStart = startOfWeekISO(iso);
+      if (!presenceCache.has(weekStart)) {
+        presenceCache.set(weekStart, session?.access_token ? await fetchSwappyPresence(session.access_token, weekStart, addDays(weekStart, 6)) : null);
+      }
+      return presenceCache.get(weekStart);
+    };
+    const drawState = {};
+    slotEntries.forEach(([key]) => { drawState[key] = { assigneeId: '', rotationPool: [] }; });
+    const newTasks = [];
+    for (let i = 0; i < workingDays.length; i++) {
+      const day = workingDays[i];
+      const isLast = i === workingDays.length - 1;
+      const presentSet = await presenceFor(day);
+      for (const [key, slot] of slotEntries) {
+        const state = drawState[key];
+        const { assigneeId, rotationPool } = nextRotatedAssignee(state, cfg.teamIds, day, () => 0, presentSet);
+        newTasks.push({
+          id: uid(), title: slot.label || (key === 'opening' ? 'Premier arrivé' : 'Dernier parti'), description: '',
+          projectId, assignMode: 'individuel', assigneeId, pool: [], raci: {},
+          priority: 'normale', importance: 'moyenne', scope: 'courte', status: 'a_faire',
+          startDate: day, deadline: day, time: slot.time,
+          repeatUnit: isLast ? 'jour' : 'aucune', repeatEvery: 1, avoidDays: isLast ? avoidDays : [],
+          rotateAssignee: isLast, rotationPool: isLast ? rotationPool : [],
+          isGovernance: false, governanceType: null, createdAt: todayISO(),
+        });
+        drawState[key] = { assigneeId, rotationPool };
+      }
+    }
+    setProjects(prev => [...prev, project]);
+    warnIfFailed(await upsertRow('projects', project), 'Le projet de roulement');
+    setTasks(prev => [...prev, ...newTasks]);
+    warnIfFailed(await insertRows('tasks', newTasks), 'Les tâches du roulement');
+    setRotationModal(null);
   };
 
   const saveTask = async (t) => {
@@ -4248,7 +4412,7 @@ function ReferentApp({ session, onSignOut }) {
 
         <div className="flex-1 overflow-y-auto p-6">
           {view === 'dashboard' && <Dashboard tasks={tasks} members={members} projects={projects} appointments={appointments} connectedAs={connectedAs} openTask={(t) => setTaskModal({ task: t })} onClaim={claimTask} onOpenProject={(p) => setProjectModal({ project: p })} />}
-          {view === 'tasks' && <TasksView tasks={scopedTasks} members={members} projects={scopedProjects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={(projectId) => setTaskModal({ task: null, presetProjectId: projectId })} newProject={() => setProjectModal({ project: null })} editProject={(p) => setProjectModal({ project: p })} />}
+          {view === 'tasks' && <TasksView tasks={scopedTasks} members={members} projects={scopedProjects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={(projectId) => setTaskModal({ task: null, presetProjectId: projectId })} newProject={() => setProjectModal({ project: null })} newRotation={() => setRotationModal({})} editProject={(p) => setProjectModal({ project: p })} />}
           {view === 'planning' && <PlanningView members={members} tasks={scopedTasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
           {view === 'transmissions' && <TransmissionsView transmissions={transmissions} members={members} currentMemberId={connectedAs} channelLastSeen={channelLastSeen} onMarkChannelSeen={markChannelSeen} onPost={postTransmission} />}
           {view === 'gantt' && <GanttView tasks={scopedTasks} members={members} projects={scopedProjects} openTask={(t) => setTaskModal({ task: t })} onOpenProject={(p) => setProjectModal({ project: p })} />}
@@ -4264,6 +4428,7 @@ function ReferentApp({ session, onSignOut }) {
       {taskModal && <TaskModal key={taskModal.task?.id || 'new'} task={taskModal.task} initialProjectId={taskModal.presetProjectId} members={members} projects={projects} perm={perm} currentMemberId={connectedAs} onSave={saveTask} onDelete={deleteTask} onClaim={claimTask} onDuplicate={duplicateTask} onClose={() => setTaskModal(null)} />}
       {memberModal && perm.canManageTeam && <MemberModal member={memberModal.member} onSave={saveMember} onDelete={deleteMember} onClose={() => setMemberModal(null)} />}
       {projectModal && perm.canCreateProject && <ProjectModal key={projectModal.project?.id || 'new'} project={projectModal.project} members={members} externalContacts={externalContacts} tasks={tasks} projects={projects} currentMemberId={connectedAs} perm={perm} session={session} onSave={saveProject} onDelete={deleteProject} onDuplicate={duplicateProject} onClose={() => setProjectModal(null)} />}
+      {rotationModal && perm.isManager && <RotationModal members={members} onSave={createRotationProject} onClose={() => setRotationModal(null)} />}
       {apptModal && <AppointmentModal appointment={apptModal.appointment} members={members} externalContacts={externalContacts} readOnly={!perm.canManageAppointments} onSave={saveAppt} onDelete={deleteAppt} onClose={() => setApptModal(null)} />}
       {contactModal && perm.canManageContacts && <ContactModal contact={contactModal.contact} onSave={saveContact} onDelete={deleteContact} onClose={() => setContactModal(null)} />}
       {requestModal && <RequestModal members={members} externalContacts={externalContacts} projects={projects} currentMemberId={connectedAs} onSave={saveRequest} onClose={() => setRequestModal(null)} />}

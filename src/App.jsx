@@ -2897,7 +2897,7 @@ function GanttView({ tasks, projects, members, openTask, onOpenProject }) {
 /*  Transmissions                                                         */
 /* ---------------------------------------------------------------------- */
 
-function TransmissionsView({ transmissions, members, currentMemberId, channelLastSeen, onMarkChannelSeen, onPost }) {
+function TransmissionsView({ transmissions, members, currentMemberId, channelLastSeen, onMarkChannelSeen, onMarkAllSeen, onPost }) {
   const channels = TRANSMISSION_CHANNELS;
   const currentMemberObj = members.find(m => m.id === currentMemberId);
   const myChannel = channels.find(c => (currentMemberObj?.services || []).includes(c.service) &&
@@ -2931,6 +2931,9 @@ function TransmissionsView({ transmissions, members, currentMemberId, channelLas
   return (
     <div className="flex gap-4 items-start">
       <div className="w-56 shrink-0 space-y-1.5">
+        <button onClick={onMarkAllSeen} className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-500 border border-slate-200 bg-white hover:bg-slate-50">
+          <Check size={12} /> Tout marquer comme lu
+        </button>
         {channels.map(c => {
           const active = selected.service === c.service && selected.functionGroup === c.functionGroup;
           const color = SERVICE_COLORS[c.service] || '#64748B';
@@ -3522,6 +3525,19 @@ function ReferentApp({ session, onSignOut }) {
     const now = new Date().toISOString();
     localStorage.setItem(`transmissions_last_seen_${connectedAs}_${key}`, now);
     setChannelLastSeen(prev => ({ ...prev, [key]: now }));
+  };
+  // Remet à zéro tous les compteurs d'un coup (badge du menu + pastilles de
+  // chaque sous-onglet) : tout est considéré comme lu à l'instant.
+  const markAllChannelsSeen = () => {
+    if (!connectedAs) return;
+    const now = new Date().toISOString();
+    const next = {};
+    TRANSMISSION_CHANNELS.forEach(c => {
+      const key = `${c.service}|${c.functionGroup}`;
+      localStorage.setItem(`transmissions_last_seen_${connectedAs}_${key}`, now);
+      next[key] = now;
+    });
+    setChannelLastSeen(prev => ({ ...prev, ...next }));
   };
   // Petit badge sur l'onglet Transmissions : somme des non-lus de chaque
   // canal, chacun avec sa propre dernière lecture.
@@ -4454,7 +4470,7 @@ function ReferentApp({ session, onSignOut }) {
           {view === 'dashboard' && <Dashboard tasks={tasks} members={members} projects={projects} appointments={appointments} connectedAs={connectedAs} openTask={(t) => setTaskModal({ task: t })} onClaim={claimTask} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'tasks' && <TasksView tasks={scopedTasks} members={members} projects={scopedProjects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={(projectId) => setTaskModal({ task: null, presetProjectId: projectId })} newProject={() => setProjectModal({ project: null })} newRotation={() => setRotationModal({})} editProject={(p) => setProjectModal({ project: p })} />}
           {view === 'planning' && <PlanningView members={members} tasks={scopedTasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
-          {view === 'transmissions' && <TransmissionsView transmissions={transmissions} members={members} currentMemberId={connectedAs} channelLastSeen={channelLastSeen} onMarkChannelSeen={markChannelSeen} onPost={postTransmission} />}
+          {view === 'transmissions' && <TransmissionsView transmissions={transmissions} members={members} currentMemberId={connectedAs} channelLastSeen={channelLastSeen} onMarkChannelSeen={markChannelSeen} onMarkAllSeen={markAllChannelsSeen} onPost={postTransmission} />}
           {view === 'gantt' && <GanttView tasks={scopedTasks} members={members} projects={scopedProjects} openTask={(t) => setTaskModal({ task: t })} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'admin_tasks' && <AdminTasksView adminTasks={adminTasks} members={members} currentMemberId={connectedAs} onSave={saveAdminTask} onDelete={deleteAdminTask} />}
           {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} onImport={importMembers} />}

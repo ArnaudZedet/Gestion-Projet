@@ -3387,7 +3387,6 @@ function navFor(perm) {
   nav.push({ id: 'planning', label: 'Planning', Icon: CalendarDays, accent: '#38BDF8' });
   nav.push({ id: 'transmissions', label: 'Transmissions', Icon: MessageCircle, accent: '#0EA5E9' });
   if (perm.isReferent) {
-    nav.push({ id: 'gantt', label: 'Durée des projets', Icon: GanttChartSquare, accent: '#A78BFA' });
   }
   if (perm.isManager) {
     nav.push({ id: 'admin_tasks', label: 'Tâches Managers', Icon: ListTodo, accent: '#14B8A6' });
@@ -4471,7 +4470,6 @@ function ReferentApp({ session, onSignOut }) {
           {view === 'tasks' && <TasksView tasks={scopedTasks} members={members} projects={scopedProjects} perm={perm} currentMemberId={connectedAs} scope={perm.isManager ? 'all' : 'mine'} openTask={(t) => setTaskModal({ task: t })} newTask={(projectId) => setTaskModal({ task: null, presetProjectId: projectId })} newProject={() => setProjectModal({ project: null })} newRotation={() => setRotationModal({})} editProject={(p) => setProjectModal({ project: p })} />}
           {view === 'planning' && <PlanningView members={members} tasks={scopedTasks} appointments={appointments} externalContacts={externalContacts} perm={perm} currentMemberId={connectedAs} openTask={(t) => setTaskModal({ task: t })} openAppt={(a) => setApptModal({ appointment: a })} newAppt={() => setApptModal({ appointment: null })} />}
           {view === 'transmissions' && <TransmissionsView transmissions={transmissions} members={members} currentMemberId={connectedAs} channelLastSeen={channelLastSeen} onMarkChannelSeen={markChannelSeen} onMarkAllSeen={markAllChannelsSeen} onPost={postTransmission} />}
-          {view === 'gantt' && <GanttView tasks={scopedTasks} members={members} projects={scopedProjects} openTask={(t) => setTaskModal({ task: t })} onOpenProject={(p) => setProjectModal({ project: p })} />}
           {view === 'admin_tasks' && <AdminTasksView adminTasks={adminTasks} members={members} currentMemberId={connectedAs} onSave={saveAdminTask} onDelete={deleteAdminTask} />}
           {view === 'team' && <TeamView members={members} tasks={tasks} perm={perm} editMember={(m) => setMemberModal({ member: m })} newMember={() => setMemberModal({ member: null })} onImport={importMembers} />}
           {view === 'contacts' && <ContactsView contacts={externalContacts} perm={perm} editContact={(c) => setContactModal({ contact: c })} newContact={() => setContactModal({ contact: null })} />}

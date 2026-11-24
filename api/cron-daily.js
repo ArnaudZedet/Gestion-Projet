@@ -74,7 +74,7 @@ function prevBusinessDay(dateStr) {
 export default async function handler(req, res) {
   if (!requireCron(req)) return res.status(401).json({ error: 'Non autorisé' });
 
-  const result = { lateProjects: 0, autoClosedProjects: 0, mandatoryClosureEmails: 0, startReminders: 0, endReminders: 0, adminTaskReminders: 0, digestRecipients: 0, digestNotifications: 0, presenceChecked: 0, presenceReplaced: 0, presenceUnresolved: 0 };
+  const result = { lateProjects: 0, autoClosedProjects: 0, mandatoryClosureEmails: 0, startReminders: 0, endReminders: 0, adminTaskReminders: 0, digestRecipients: 0, digestNotifications: 0, presenceChecked: 0, presenceReplaced: 0, presenceUnresolved: 0, meetingReminders: 0 };
 
   try {
     // --- 0. Collaborateurs (nécessaire pour la clôture/rotation + les copies) ---
@@ -299,6 +299,40 @@ export default async function handler(req, res) {
       result.presenceChecked = presence.checked;
       result.presenceReplaced = presence.replaced;
       result.presenceUnresolved = presence.unresolved;
+    }
+
+    // --- 4ter. Réunions du lendemain : mail à toute l'équipe concernée ---
+    // Une "réunion" = une tâche ponctuelle (un seul jour) dont le titre
+    // contient "réunion", pas encore terminée. Destinataires : l'équipe du
+    // projet de la tâche (tout le monde si elle n'a pas de projet/d'équipe),
+    // en copie Caroline et Arnaud. Part la veille (ce cron tourne chaque
+    // matin : une réunion du lendemain est donc annoncée exactement une fois).
+    const tomorrow = new Date(`${today}T12:00:00Z`);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    const tomorrowISO = tomorrow.toISOString().slice(0, 10);
+    const { data: meetingTasks, error: meetErr } = await supabaseAdmin
+      .from('tasks').select('id, title, start_date, deadline, time, project_id, status')
+      .eq('deadline', tomorrowISO).neq('status', 'termine').ilike('title', '%réunion%');
+    if (meetErr) throw new Error(meetErr.message);
+    const singleDay = (meetingTasks || []).filter((t) => !t.start_date || t.start_date === t.deadline);
+    for (const t of singleDay) {
+      let teamIds = [];
+      if (t.project_id) {
+        const { data: proj } = await supabaseAdmin.from('projects').select('team_ids').eq('id', t.project_id).maybeSingle();
+        teamIds = proj?.team_ids || [];
+      }
+      const teamEmails = (teamIds.length ? teamIds.map((id) => membersById[id]) : Object.values(membersById))
+        .map((m) => m?.email).filter(Boolean);
+      const to = [...new Set(teamEmails)];
+      const cc = ccEmails.filter((e) => !to.includes(e));
+      if (!to.length && !cc.length) continue;
+      const when = new Date(`${tomorrowISO}T12:00:00Z`).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
+      await sendEmail({
+        to: to.length ? to : cc, cc: to.length ? cc : [],
+        subject: `Demain : ${t.title}`,
+        html: `<p>Bonjour,</p><p>Pour rappel, la réunion <strong>${escapeHtml(t.title)}</strong> est prévue demain, ${when}${t.time ? ` à ${escapeHtml(t.time)}` : ''}.</p>`,
+      });
+      result.meetingReminders += 1;
     }
 
     // --- 5. Envoi groupé des notifications en attente ---

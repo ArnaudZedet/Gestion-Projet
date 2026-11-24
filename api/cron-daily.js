@@ -303,9 +303,8 @@ export default async function handler(req, res) {
 
     // --- 4ter. Réunions du lendemain : mail à toute l'équipe concernée ---
     // Une "réunion" = une tâche ponctuelle (un seul jour) dont le titre
-    // contient "réunion", pas encore terminée. Destinataires : l'équipe du
-    // projet de la tâche (tout le monde si elle n'a pas de projet/d'équipe),
-    // en copie Caroline et Arnaud. Part la veille (ce cron tourne chaque
+    // contient "réunion", pas encore terminée. Destinataires : tout le
+    // personnel (pas seulement les personnes concernées), en copie Caroline et Arnaud. Part la veille (ce cron tourne chaque
     // matin : une réunion du lendemain est donc annoncée exactement une fois).
     const tomorrow = new Date(`${today}T12:00:00Z`);
     tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
@@ -316,13 +315,7 @@ export default async function handler(req, res) {
     if (meetErr) throw new Error(meetErr.message);
     const singleDay = (meetingTasks || []).filter((t) => !t.start_date || t.start_date === t.deadline);
     for (const t of singleDay) {
-      let teamIds = [];
-      if (t.project_id) {
-        const { data: proj } = await supabaseAdmin.from('projects').select('team_ids').eq('id', t.project_id).maybeSingle();
-        teamIds = proj?.team_ids || [];
-      }
-      const teamEmails = (teamIds.length ? teamIds.map((id) => membersById[id]) : Object.values(membersById))
-        .map((m) => m?.email).filter(Boolean);
+      const teamEmails = Object.values(membersById).map((m) => m?.email).filter(Boolean);
       const to = [...new Set(teamEmails)];
       const cc = ccEmails.filter((e) => !to.includes(e));
       if (!to.length && !cc.length) continue;

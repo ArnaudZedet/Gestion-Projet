@@ -221,4 +221,4 @@ export async function autoCloseAndRenewProject({ supabaseAdmin, project, tasks, 
   return { renewed: true, newProjectId, newStartDate: nextStart, newEndDate: nextEnd, newResponsibleIds, oldResponsibleIds: project.responsible_ids || [] };
 }
 
-export { escapeHtml };
+export { escapeHtml, fetchSwappyPresenceAdmin, normalizeName, eligibleTeam, shuffleArray, addDays };

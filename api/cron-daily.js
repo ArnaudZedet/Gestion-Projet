@@ -2,6 +2,7 @@ import { supabaseAdmin } from './_supabaseAdmin.js';
 import { sendEmail } from './_resend.js';
 import { requireCron } from './_cron.js';
 import { autoCloseAndRenewProject } from './_projectRenewal.js';
+import { checkProjectResponsiblePresence } from './_presenceCheck.js';
 
 // Noms de projet et de collaborateur sont saisis par les utilisateurs et
 // finissent tels quels dans du HTML envoyé par email — échapper avant
@@ -42,7 +43,7 @@ function prevBusinessDay(dateStr) {
 
 // Tourne une fois par jour à 7h heure de Paris (voir vercel.json — l'heure
 // UTC choisie tient compte du changement heure été/hiver à ±1h près).
-// Fait cinq choses, regroupées dans le même cron pour rester dans la
+// Fait six choses (la sixième, la vérification de présence Swappy, seulement les lundis et mercredis), regroupées dans le même cron pour rester dans la
 // limite de 2 tâches planifiées du plan Vercel Hobby :
 //
 // 1. Projets en retard (date de fin dépassée, jamais marqués "Terminé",
@@ -73,7 +74,7 @@ function prevBusinessDay(dateStr) {
 export default async function handler(req, res) {
   if (!requireCron(req)) return res.status(401).json({ error: 'Non autorisé' });
 
-  const result = { lateProjects: 0, autoClosedProjects: 0, mandatoryClosureEmails: 0, startReminders: 0, endReminders: 0, adminTaskReminders: 0, digestRecipients: 0, digestNotifications: 0 };
+  const result = { lateProjects: 0, autoClosedProjects: 0, mandatoryClosureEmails: 0, startReminders: 0, endReminders: 0, adminTaskReminders: 0, digestRecipients: 0, digestNotifications: 0, presenceChecked: 0, presenceReplaced: 0, presenceUnresolved: 0 };
 
   try {
     // --- 0. Collaborateurs (nécessaire pour la clôture/rotation + les copies) ---
@@ -289,6 +290,15 @@ export default async function handler(req, res) {
         await supabaseAdmin.from('admin_tasks').update({ late_notified_at: new Date().toISOString() }).in('id', lateAdminTasks.map((t) => t.id));
       }
       result.adminTaskReminders = allAdminTasks.length;
+    }
+
+    // --- 4bis. Présence des responsables de projet sur Swappy (lundi et mercredi) ---
+    const dow = new Date(`${today}T12:00:00Z`).getUTCDay();
+    if (dow === 1 || dow === 3) {
+      const presence = await checkProjectResponsiblePresence({ supabaseAdmin, membersById, ccEmails, today });
+      result.presenceChecked = presence.checked;
+      result.presenceReplaced = presence.replaced;
+      result.presenceUnresolved = presence.unresolved;
     }
 
     // --- 5. Envoi groupé des notifications en attente ---
